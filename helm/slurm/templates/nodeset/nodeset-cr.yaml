@@ -76,6 +76,9 @@ spec:
   {{- if $nodeset.taintKubeNodes }}
   taintKubeNodes: {{ $nodeset.taintKubeNodes }}
   {{- end }}{{- /* if $nodeset.taintKubeNodes */}}
+  {{- if $nodeset.useNodeNameAsHostname }}
+  useNodeNameAsHostname: {{ $nodeset.useNodeNameAsHostname }}
+  {{- end }}{{- /* if $nodeset.useNodeNameAsHostname */}}
   {{- if $nodeset.workloadDisruptionProtection }}
   workloadDisruptionProtection: {{ $nodeset.workloadDisruptionProtection }}
   {{- end }}{{- /* if $nodeset.workloadDisruptionProtection */}}

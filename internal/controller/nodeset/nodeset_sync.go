@@ -571,6 +571,29 @@ func (r *NodeSetReconciler) syncNodeSet(
 	return r.doPodProcessing(ctx, nodeset, pods, hash)
 }
 
+// nodeAssignmentKey returns the key used for the in-memory node assignment map.
+func nodeAssignmentKey(nodeset *slinkyv1beta1.NodeSet, ordinal int) string {
+	return fmt.Sprintf("%s/%s/%d", nodeset.Namespace, nodeset.Name, ordinal)
+}
+
+// saveNodeAssignment stores the Kubernetes node name that the scheduler chose
+// for a given ordinal, so that when the pod is recreated it can be placed on
+// the same node with the correct hostname.
+func (r *NodeSetReconciler) saveNodeAssignment(nodeset *slinkyv1beta1.NodeSet, ordinal int, nodeName string) {
+	r.nodeAssignments.Store(nodeAssignmentKey(nodeset, ordinal), nodeName)
+}
+
+// loadNodeAssignment retrieves and removes a previously saved node assignment
+// for the given ordinal. Returns the node name and true if found.
+func (r *NodeSetReconciler) loadNodeAssignment(nodeset *slinkyv1beta1.NodeSet, ordinal int) (string, bool) {
+	key := nodeAssignmentKey(nodeset, ordinal)
+	val, ok := r.nodeAssignments.LoadAndDelete(key)
+	if !ok {
+		return "", false
+	}
+	return val.(string), true
+}
+
 // doPodScaleOut handles scaling-out NodeSet pods.
 // NodeSet pods should be uncordoned and undrained, and new pods created.
 func (r *NodeSetReconciler) doPodScaleOut(
@@ -609,6 +632,19 @@ func (r *NodeSetReconciler) doPodScaleOut(
 			return err
 		}
 		usedOrdinals.Insert(ordinal)
+
+		// When UseNodeNameAsHostname is enabled and a node assignment was
+		// previously saved (from a scheduler-placed pod whose hostname did
+		// not match), recreate the pod on the same node with the correct
+		// hostname.
+		if nodeset.Spec.UseNodeNameAsHostname {
+			if nodeName, ok := r.loadNodeAssignment(nodeset, ordinal); ok {
+				pod.Spec.NodeName = nodeName
+				pod.Spec.Hostname = nodeName
+				pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = nodeName
+			}
+		}
+
 		podsToCreate[i] = pod
 	}
 
@@ -845,6 +881,8 @@ func (r *NodeSetReconciler) processReplica(
 	nodeset *slinkyv1beta1.NodeSet,
 	pod *corev1.Pod,
 ) error {
+	logger := log.FromContext(ctx)
+
 	// Note that pods with phase Succeeded will also trigger this event. This is
 	// because final pod phase of evicted or otherwise forcibly stopped pods
 	// (e.g. terminated on node reboot) is determined by the exit code of the
@@ -857,6 +895,29 @@ func (r *NodeSetReconciler) processReplica(
 			}
 		}
 		// New pod should be generated on the next sync after the current pod is removed from etcd.
+		return nil
+	}
+
+	// When UseNodeNameAsHostname is enabled, the pod's hostname must match
+	// the Kubernetes node name. If the scheduler has placed the pod on a
+	// node but the hostname doesn't match, save the node assignment and
+	// delete the pod. On the next reconcile the pod will be recreated with
+	// the correct hostname, placed directly on the same node.
+	if nodeset.Spec.UseNodeNameAsHostname &&
+		!podutils.IsTerminating(pod) &&
+		pod.Spec.NodeName != "" &&
+		pod.Spec.Hostname != pod.Spec.NodeName {
+
+		ordinal := nodesetutils.GetOrdinal(pod)
+		logger.Info("Pod hostname does not match node name, recreating",
+			"pod", klog.KObj(pod),
+			"hostname", pod.Spec.Hostname,
+			"nodeName", pod.Spec.NodeName,
+			"ordinal", ordinal)
+		r.saveNodeAssignment(nodeset, ordinal, pod.Spec.NodeName)
+		if err := r.podControl.DeleteNodeSetPod(ctx, nodeset, pod); err != nil {
+			return err
+		}
 		return nil
 	}
 

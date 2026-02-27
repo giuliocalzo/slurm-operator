@@ -150,6 +150,7 @@ Kubernetes: `>= 1.29.0-0`
 | nodesets.slinky.ssh.extraSshdConfig | string | `nil` | Extra configuration lines appended to `/etc/ssh/sshd_config`. Ref: https://manpages.ubuntu.com/manpages/noble/man5/sshd_config.5.html |
 | nodesets.slinky.taintKubeNodes | bool | `false` | Taint the Kubernetes nodes on which nodeset pods are scheduled with NoExecute. |
 | nodesets.slinky.updateStrategy.rollingUpdate.maxUnavailable | string | `"25%"` | Maximum number of pods that can be unavailable during update. Can be an absolute number (ex: 5) or a percentage (ex: 25%). |
+| nodesets.slinky.useNodeNameAsHostname | bool | `false` | Set pod hostname to the Kubernetes node name. Pods are first scheduled by the Kubernetes scheduler; once placed, the operator recreates them on the same node with hostname set to the node name. Useful when Slurm node names should match physical or virtual machine names. |
 | nodesets.slinky.updateStrategy.type | string | `"RollingUpdate"` | The strategy type. Can be one of: RollingUpdate; OnDelete. |
 | nodesets.slinky.workloadDisruptionProtection | bool | `true` | Use a Pod Disruption Budget to protect pods in this NodeSet when Slurm jobs are running on them Ref: https://kubernetes.io/docs/tasks/run-application/configure-pdb/ |
 | partitions | map[string]object | `{"all":{"config":null,"configMap":{"Default":"YES","MaxTime":"UNLIMITED","State":"UP"},"enabled":true,"nodesets":["ALL"]}}` | Slurm partition configurations. The map key represents the partition name (must be unique); the map value represents the partition definition. |
