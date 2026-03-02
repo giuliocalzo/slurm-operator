@@ -12,6 +12,7 @@
   - [Drain and Cordon](#drain-and-cordon)
     - [Kubernetes to Slurm (K8s → Slurm)](#kubernetes-to-slurm-k8s--slurm)
     - [Slurm to Kubernetes (Slurm → K8s)](#slurm-to-kubernetes-slurm--k8s)
+    - [Priority](#priority)
     - [Loop Prevention](#loop-prevention)
   - [Well-Known Annotations](#well-known-annotations)
     - [Pod Annotations](#pod-annotations)
@@ -118,6 +119,25 @@ annotations from the pod.
 The operator distinguishes external drains from its own by checking the Slurm
 node reason prefix (`slurm-operator:`). Drains that do not carry this prefix
 are treated as externally initiated.
+
+### Priority
+
+The Kubernetes node cordon state has **higher priority** than the Slurm drain
+state. If a Kubernetes node is cordoned, the operator will **always** drain the
+corresponding Slurm node on every reconciliation. This means that running
+`scontrol update node=<name> state=resume` while the Kubernetes node is still
+cordoned has **no lasting effect** — the operator will re-drain the Slurm node
+on the next reconciliation cycle.
+
+To fully undrain a node that was cordoned from the Kubernetes side, you must
+uncordon the Kubernetes node first (`kubectl uncordon <node>`). Only then will
+the operator allow the Slurm node to remain in an idle/resume state.
+
+Conversely, an external Slurm drain (`scontrol update node=<name> state=drain`)
+is reflected on the Kubernetes side as a pod annotation but does **not** cordon
+the Kubernetes node itself. The Slurm drain can be lifted independently via
+`scontrol update node=<name> state=resume`, and the operator will remove the pod
+annotations accordingly.
 
 ### Loop Prevention
 
