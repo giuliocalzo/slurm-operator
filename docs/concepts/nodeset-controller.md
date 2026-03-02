@@ -82,98 +82,54 @@ Kubernetes and Slurm. Draining a node on either side is reflected on the other.
 
 ### Kubernetes to Slurm (K8s → Slurm)
 
-When a Kubernetes node is cordoned (`kubectl cordon <node>`), the NodeSet
-controller:
+When a Kubernetes node is cordoned (`kubectl cordon <node>`), the operator
+cordons each NodeSet pod on that node (`pod-cordon: "true"`,
+`pod-cordon-source: "operator"`) and drains the corresponding Slurm node.
 
-1. Sets the `nodeset.slinky.slurm.net/pod-cordon: "true"` annotation on each
-   NodeSet pod running on that node.
-2. Sets `nodeset.slinky.slurm.net/pod-cordon-source: "operator"` to record that
-   the cordon originated from the Kubernetes side.
-3. Drains the corresponding Slurm node via the Slurm REST API, prefixing the
-   reason with `slurm-operator:`.
+When the node is uncordoned (`kubectl uncordon <node>`), the operator removes
+the pod cordon annotations and undrains the Slurm node.
 
-When the Kubernetes node is uncordoned (and its cordon annotations are
-removed), the operator detects that the pod still carries a cordon with source
-`"operator"` while the node is no longer cordoned. It then removes the pod
-cordon annotations and undrains the corresponding Slurm node.
+The same flow applies when `pod-cordon` is set directly on a NodeSet pod.
 
-The same flow applies when the `pod-cordon` annotation is set directly on a
-NodeSet pod (e.g. for targeted draining of a single Slurm node).
-
-A custom drain reason can be provided by setting the
-`nodeset.slinky.slurm.net/node-cordon-reason` annotation on the Kubernetes
-node before or after cordoning it. If the annotation is updated while the node
-is already cordoned, the operator will update the Slurm drain reason on the
-next reconciliation to match.
+A custom Slurm drain reason can be provided via the `node-cordon-reason`
+annotation on the Kubernetes node. If updated while already cordoned, the
+operator propagates the new reason to Slurm on the next reconciliation.
 
 ### Slurm to Kubernetes (Slurm → K8s)
 
-When a Slurm node is drained externally (e.g. via `scontrol update
-node=<name> state=drain reason="maintenance"`), the NodeSet controller detects
-this during its periodic reconciliation and:
+When a Slurm node is drained externally (e.g.
+`scontrol update node=<name> state=drain reason="maintenance"`), the operator
+cordons the Kubernetes node, sets `node-cordon-source: "slurm"` and
+`node-cordon-reason` on the node, and marks the pod (`pod-cordon: "true"`,
+`pod-cordon-source: "slurm"`, `pod-cordon-reason`).
 
-1. Cordons the Kubernetes node (`node.spec.unschedulable = true`) so that no
-   new workloads are scheduled on it.
-2. Sets `nodeset.slinky.slurm.net/node-cordon-source: "slurm"` on the
-   Kubernetes node to record that the operator cordoned it.
-3. Sets `nodeset.slinky.slurm.net/node-cordon-reason` on the Kubernetes node
-   to the Slurm drain reason, making it visible from `kubectl describe node`.
-4. Sets `nodeset.slinky.slurm.net/pod-cordon: "true"` on the corresponding
-   pod.
-5. Sets `nodeset.slinky.slurm.net/pod-cordon-source: "slurm"` to record that
-   the cordon originated from the Slurm side.
-6. Sets `nodeset.slinky.slurm.net/pod-cordon-reason` to the Slurm node's
-   drain reason, making it visible from `kubectl describe pod`.
+When the Slurm node is undrained externally, the operator uncordons the
+Kubernetes node, removes all node and pod cordon annotations.
 
-When the Slurm node is undrained externally, the controller removes all
-annotations from both the pod and the Kubernetes node, and uncordons the node.
-
-The operator distinguishes external drains from its own by checking the Slurm
-node reason prefix (`slurm-operator:`). Drains that do not carry this prefix
-are treated as externally initiated.
+The operator distinguishes external drains from its own by the Slurm reason
+prefix `slurm-operator:`.
 
 ### Priority
 
-The Kubernetes node cordon state has **higher priority** than the Slurm drain
-state. The operator evaluates the Kubernetes node cordon **before** any external
-Slurm drain, so when both exist simultaneously the Kubernetes reason wins and is
-forwarded to Slurm.
+Kubernetes node cordon has **higher priority** than Slurm drain. When both
+exist, the Kubernetes reason wins. Running `scontrol resume` while the node is
+cordoned has no lasting effect — the operator re-drains on the next
+reconciliation. To fully undrain, uncordon the Kubernetes node first.
 
-If a Kubernetes node is cordoned, the operator will **always** drain the
-corresponding Slurm node on every reconciliation. This means that running
-`scontrol update node=<name> state=resume` while the Kubernetes node is still
-cordoned has **no lasting effect** — the operator will re-drain the Slurm node
-on the next reconciliation cycle.
-
-To fully undrain a node that was cordoned from the Kubernetes side, you must
-uncordon the Kubernetes node first (`kubectl uncordon <node>`). Only then will
-the operator allow the Slurm node to remain in an idle/resume state.
-
-An external Slurm drain (`scontrol update node=<name> state=drain`) is only
-processed when the Kubernetes node is **not** independently cordoned. When
-processed, it is reflected on the Kubernetes side as both a pod annotation and a
-Kubernetes node cordon. The Slurm drain can be lifted independently via
-`scontrol update node=<name> state=resume`, and the operator will remove the pod
-annotations and uncordon the Kubernetes node accordingly.
+External Slurm drains are only processed when the Kubernetes node is **not**
+independently cordoned.
 
 ### Loop Prevention
 
-A bidirectional sync must avoid infinite loops where each side re-triggers the
-other. The operator prevents this using the `pod-cordon-source` annotation:
+The `pod-cordon-source` annotation prevents infinite loops:
 
-- When the controller sets `pod-cordon` because of a Kubernetes node cordon, it
-  also sets `pod-cordon-source: "operator"`.
-- When the controller sets `pod-cordon` because of an external Slurm drain, it
-  also sets `pod-cordon-source: "slurm"`.
-- On subsequent reconciles, if the pod is cordoned with source `"slurm"`, the
-  controller does **not** issue a drain command to Slurm (the node is already
-  drained). The Kubernetes node cordon set by the operator is also recognized as
-  Slurm-originated and does not trigger the K8s → Slurm drain path.
-- If the Slurm node is later undrained, the controller detects the state change,
-  removes the pod annotations, and uncordons the Kubernetes node.
-- Cordons with source `"operator"` take priority: the operator will re-drain the
-  Slurm node on every reconciliation as long as the Kubernetes node stays
-  cordoned, regardless of any `scontrol` undrain attempts.
+- Source `"operator"` → K8s-initiated; Slurm is re-drained every reconciliation
+  while the node stays cordoned. When the node is uncordoned, the operator
+  cleans up pod annotations and undrains Slurm.
+- Source `"slurm"` → Slurm-initiated; the operator does **not** re-drain Slurm.
+  The node cordon set by the operator is also recognized as Slurm-originated.
+  When Slurm is undrained, the operator removes annotations and uncordons the
+  node.
 
 ## Well-Known Annotations
 
@@ -181,16 +137,21 @@ other. The operator prevents this using the `pod-cordon-source` annotation:
 
 | Annotation | Value | Description |
 |---|---|---|
-| `nodeset.slinky.slurm.net/pod-cordon` | `"true"` | Marks the pod for Slurm node drain. When set, the corresponding Slurm node is drained (or already drained, in the Slurm → K8s direction). |
-| `nodeset.slinky.slurm.net/pod-cordon-source` | `"operator"` or `"slurm"` | Indicates the origin of the cordon. `"operator"` means the cordon was initiated from a Kubernetes node cordon (higher priority). `"slurm"` means it was initiated from an external Slurm drain and prevents the operator from re-draining the Slurm node. |
-| `nodeset.slinky.slurm.net/pod-cordon-reason` | string | The Slurm node drain reason, stored when the cordon originates from an external Slurm drain. |
-| `nodeset.slinky.slurm.net/pod-deletion-cost` | integer | Influences pod deletion order during scale-in. Lower cost pods are deleted first. |
-| `nodeset.slinky.slurm.net/pod-deadline` | RFC 3339 timestamp | Indicates when the Slurm node's running workload is expected to complete. Earlier deadlines are preferred for deletion. |
+| `pod-cordon` | `"true"` | Marks the pod for Slurm node drain. |
+| `pod-cordon-source` | `"operator"` / `"slurm"` | Origin of the cordon. `"operator"` = K8s-initiated (higher priority). `"slurm"` = external Slurm drain. |
+| `pod-cordon-reason` | string | Slurm drain reason (set in Slurm → K8s direction). |
+| `pod-deletion-cost` | integer | Pod deletion order during scale-in. Lower cost deleted first. |
+| `pod-deadline` | RFC 3339 timestamp | Expected workload completion time. Earlier deadlines preferred for deletion. |
+
+All pod annotations use the `nodeset.slinky.slurm.net/` prefix.
 
 ### Node Annotations
 
 | Annotation | Value | Description |
 |---|---|---|
-| `nodeset.slinky.slurm.net/node-cordon-reason` | string | In the K8s → Slurm direction, can be set by the user to override the default Slurm drain reason. In the Slurm → K8s direction, set by the operator to reflect the external Slurm drain reason. |
-| `nodeset.slinky.slurm.net/node-cordon-source` | `"slurm"` | Present when the operator cordoned the Kubernetes node in response to an external Slurm drain. Removed when the node is uncordoned. |
-| `topology.slinky.slurm.net/line` | string | The Slurm dynamic topology line (e.g. `"topo-switch:s2,topo-block:b2"`). See [Topology](../usage/topology.md). |
+| `node-cordon-reason` | string | K8s → Slurm: user-set custom drain reason. Slurm → K8s: operator-set Slurm drain reason. |
+| `node-cordon-source` | `"slurm"` | Present when the operator cordoned the node due to an external Slurm drain. |
+| `line` | string | Slurm dynamic topology line (e.g. `"topo-switch:s2,topo-block:b2"`). See [Topology](../usage/topology.md). |
+
+Node cordon annotations use the `nodeset.slinky.slurm.net/` prefix.
+The `line` annotation uses the `topology.slinky.slurm.net/` prefix.
