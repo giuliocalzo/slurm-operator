@@ -87,7 +87,9 @@ controller:
 
 1. Sets the `nodeset.slinky.slurm.net/pod-cordon: "true"` annotation on each
    NodeSet pod running on that node.
-2. Drains the corresponding Slurm node via the Slurm REST API, prefixing the
+2. Sets `nodeset.slinky.slurm.net/pod-cordon-source: "operator"` to record that
+   the cordon originated from the Kubernetes side.
+3. Drains the corresponding Slurm node via the Slurm REST API, prefixing the
    reason with `slurm-operator:`.
 
 When the Kubernetes node is uncordoned, the pod annotation is removed and the
@@ -144,6 +146,8 @@ annotations accordingly.
 A bidirectional sync must avoid infinite loops where each side re-triggers the
 other. The operator prevents this using the `pod-cordon-source` annotation:
 
+- When the controller sets `pod-cordon` because of a Kubernetes node cordon, it
+  also sets `pod-cordon-source: "operator"`.
 - When the controller sets `pod-cordon` because of an external Slurm drain, it
   also sets `pod-cordon-source: "slurm"`.
 - On subsequent reconciles, if the pod is cordoned with source `"slurm"`, the
@@ -151,9 +155,9 @@ other. The operator prevents this using the `pod-cordon-source` annotation:
   drained).
 - If the Slurm node is later undrained, the controller detects the state change
   and removes the pod annotations.
-- Cordons that originate from the Kubernetes side (node cordon or direct
-  annotation) do **not** set a source, so they continue to trigger the normal
-  K8s → Slurm drain flow.
+- Cordons with source `"operator"` take priority: the operator will re-drain the
+  Slurm node on every reconciliation as long as the Kubernetes node stays
+  cordoned, regardless of any `scontrol` undrain attempts.
 
 ## Well-Known Annotations
 
@@ -162,7 +166,7 @@ other. The operator prevents this using the `pod-cordon-source` annotation:
 | Annotation | Value | Description |
 |---|---|---|
 | `nodeset.slinky.slurm.net/pod-cordon` | `"true"` | Marks the pod for Slurm node drain. When set, the corresponding Slurm node is drained (or already drained, in the Slurm → K8s direction). |
-| `nodeset.slinky.slurm.net/pod-cordon-source` | `"slurm"` | Present only when the cordon was initiated from the Slurm side (external drain). Prevents the operator from re-draining the Slurm node. |
+| `nodeset.slinky.slurm.net/pod-cordon-source` | `"operator"` or `"slurm"` | Indicates the origin of the cordon. `"operator"` means the cordon was initiated from a Kubernetes node cordon (higher priority). `"slurm"` means it was initiated from an external Slurm drain and prevents the operator from re-draining the Slurm node. |
 | `nodeset.slinky.slurm.net/pod-cordon-reason` | string | The Slurm node drain reason, stored when the cordon originates from an external Slurm drain. |
 | `nodeset.slinky.slurm.net/pod-deletion-cost` | integer | Influences pod deletion order during scale-in. Lower cost pods are deleted first. |
 | `nodeset.slinky.slurm.net/pod-deadline` | RFC 3339 timestamp | Indicates when the Slurm node's running workload is expected to complete. Earlier deadlines are preferred for deletion. |

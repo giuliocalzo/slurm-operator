@@ -35,6 +35,8 @@ const (
 	// AnnotationPodCordonSource indicates the origin of the pod cordon.
 	// When set to "slurm", the cordon was initiated from an external Slurm drain
 	// and should not cause the operator to re-drain the Slurm node.
+	// When set to "operator", the cordon was initiated from the Kubernetes side
+	// (node cordon) and takes priority over Slurm drain state.
 	AnnotationPodCordonSource = NodeSetPrefix + "pod-cordon-source"
 
 	// AnnotationPodCordonReason stores the Slurm drain reason when the pod was
@@ -44,6 +46,10 @@ const (
 	// PodCordonSourceSlurm is the value of AnnotationPodCordonSource when the
 	// cordon originates from an external Slurm drain (not managed by the operator).
 	PodCordonSourceSlurm = "slurm"
+
+	// PodCordonSourceOperator is the value of AnnotationPodCordonSource when the
+	// cordon originates from a Kubernetes node cordon detected by the operator.
+	PodCordonSourceOperator = "operator"
 )
 
 // Well Known Annotations for Objects of type corev1.Node

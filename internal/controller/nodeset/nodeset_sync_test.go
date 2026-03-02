@@ -1315,10 +1315,11 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 		pod *corev1.Pod
 	}
 	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		wantErr bool
+		name       string
+		fields     fields
+		args       args
+		wantErr    bool
+		wantSource string
 	}{
 
 		{
@@ -1341,7 +1342,8 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 				ctx: context.TODO(),
 				pod: pod2.DeepCopy(),
 			},
-			wantErr: false,
+			wantErr:    false,
+			wantSource: "",
 		},
 		{
 			name: "not cordoned",
@@ -1352,7 +1354,8 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 				ctx: context.TODO(),
 				pod: pod1.DeepCopy(),
 			},
-			wantErr: false,
+			wantErr:    false,
+			wantSource: slinkyv1beta1.PodCordonSourceOperator,
 		},
 	}
 	for _, tt := range tests {
@@ -1370,6 +1373,9 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 			} else if !tt.wantErr {
 				if ok := podutils.IsPodCordon(gotPod); !ok {
 					t.Errorf("IsPodCordon() = %v", ok)
+				}
+				if gotSource := podutils.GetPodCordonSource(gotPod); gotSource != tt.wantSource {
+					t.Errorf("GetPodCordonSource() = %v, want %v", gotSource, tt.wantSource)
 				}
 			}
 		})

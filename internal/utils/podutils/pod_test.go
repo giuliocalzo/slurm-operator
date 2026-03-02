@@ -83,6 +83,17 @@ func TestGetPodCordonSource(t *testing.T) {
 			want: slinkyv1beta1.PodCordonSourceSlurm,
 		},
 		{
+			name: "source is operator",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						slinkyv1beta1.AnnotationPodCordonSource: slinkyv1beta1.PodCordonSourceOperator,
+					},
+				},
+			},
+			want: slinkyv1beta1.PodCordonSourceOperator,
+		},
+		{
 			name: "source not set",
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{

@@ -985,6 +985,7 @@ func (r *NodeSetReconciler) makePodCordon(
 		toUpdate.Annotations = make(map[string]string)
 	}
 	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordon] = "true"
+	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = slinkyv1beta1.PodCordonSourceOperator
 	if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
 		return err
 	}
