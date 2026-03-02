@@ -54,9 +54,21 @@ const (
 
 // Well Known Annotations for Objects of type corev1.Node
 const (
-	// AnnotationNodeCordonReason indicates a custom reason for the Slurm DRAIN action taken when the Kube node on which
-	// a NodeSet pod is scheduled is cordoned
+	// AnnotationNodeCordonReason stores the drain reason on the Kubernetes node.
+	// In the K8s → Slurm direction it can be set by the user before cordoning to
+	// override the default Slurm drain reason.
+	// In the Slurm → K8s direction it is set by the operator to reflect the
+	// external Slurm drain reason.
 	AnnotationNodeCordonReason = NodeSetPrefix + "node-cordon-reason"
+
+	// AnnotationNodeCordonSource indicates who cordoned the Kubernetes node.
+	// When set to "slurm", the operator cordoned the node in response to an
+	// external Slurm drain.
+	AnnotationNodeCordonSource = NodeSetPrefix + "node-cordon-source"
+
+	// NodeCordonSourceSlurm is the value of AnnotationNodeCordonSource when the
+	// operator cordoned the Kubernetes node due to an external Slurm drain.
+	NodeCordonSourceSlurm = "slurm"
 
 	// AnnotationNodeTopologyLine indicates the Slurm dynamic topology line (e.g. "topo-switch:s2,topo-block:b2").
 	// Ref: https://slurm.schedmd.com/topology.html#dynamic_topo

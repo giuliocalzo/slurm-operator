@@ -329,33 +329,15 @@ func (r *NodeSetReconciler) syncCordon(
 		case slurmNodeIsUnresponsive:
 			return nil
 
-		// Slurm node has an externally set reason — sync K8s pod annotation
-		// to reflect the Slurm drain state (bidirectional: Slurm → K8s).
-		case !ourReason:
-			slurmIsDrain, err := r.slurmControl.IsNodeDrain(ctx, nodeset, pod)
-			if err != nil {
-				return err
-			}
-			if slurmIsDrain && !podIsCordoned {
-				reason, err := r.slurmControl.GetNodeReason(ctx, nodeset, pod)
-				if err != nil {
-					return err
-				}
-				logger.Info("Slurm node drained externally, cordoning pod",
-					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "reason", reason)
-				return r.makePodCordonFromSlurm(ctx, pod, reason)
-			}
-			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
-				logger.Info("Slurm node undrained externally, uncordoning pod",
-					"pod", klog.KObj(pod), "node", pod.Spec.NodeName)
-				return r.makePodUncordon(ctx, pod)
-			}
-			return nil
-
-		// If Kubernetes node is cordoned, cordon the pod and drain Slurm.
+		// If Kubernetes node is cordoned (not due to a Slurm-originated drain),
+		// cordon the pod and drain Slurm. K8s cordon takes priority over any
+		// external Slurm drain state.
 		// When the node also carries a node-cordon-reason annotation, its value
 		// is forwarded as the Slurm drain reason (e.g. "[J] GPU XID - JIRA-12345").
-		case nodeIsCordoned:
+		// Skip when the pod source is "slurm" because the node cordon was set by
+		// the operator in response to an external Slurm drain; the Slurm-specific
+		// case below will handle the lifecycle.
+		case nodeIsCordoned && podCordonSource != slinkyv1beta1.PodCordonSourceSlurm:
 			reason := fmt.Sprintf("Node (%s) was cordoned, Pod (%s) must be cordoned",
 				pod.Spec.NodeName, klog.KObj(pod))
 			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok {
@@ -370,6 +352,35 @@ func (r *NodeSetReconciler) syncCordon(
 				return err
 			}
 
+		// Slurm node has an externally set reason — sync K8s pod annotation
+		// to reflect the Slurm drain state (bidirectional: Slurm → K8s).
+		case !ourReason:
+			slurmIsDrain, err := r.slurmControl.IsNodeDrain(ctx, nodeset, pod)
+			if err != nil {
+				return err
+			}
+			if slurmIsDrain && !podIsCordoned {
+				reason, err := r.slurmControl.GetNodeReason(ctx, nodeset, pod)
+				if err != nil {
+					return err
+				}
+				logger.Info("Slurm node drained externally, cordoning pod and node",
+					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "reason", reason)
+				if err := r.makeNodeCordon(ctx, node, reason); err != nil {
+					return err
+				}
+				return r.makePodCordonFromSlurm(ctx, pod, reason)
+			}
+			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
+				logger.Info("Slurm node undrained externally, uncordoning pod and node",
+					"pod", klog.KObj(pod), "node", pod.Spec.NodeName)
+				if err := r.makeNodeUncordon(ctx, node); err != nil {
+					return err
+				}
+				return r.makePodUncordon(ctx, pod)
+			}
+			return nil
+
 		// Pod was cordoned due to external Slurm drain. The Slurm reason may
 		// have been cleared (ourReason=true now), so verify Slurm is still drained.
 		case podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm:
@@ -378,10 +389,20 @@ func (r *NodeSetReconciler) syncCordon(
 				return err
 			}
 			if !slurmIsDrain {
-				logger.Info("Slurm node no longer drained, uncordoning pod",
+				logger.Info("Slurm node no longer drained, uncordoning pod and node",
 					"pod", klog.KObj(pod))
+				if err := r.makeNodeUncordon(ctx, node); err != nil {
+					return err
+				}
 				return r.makePodUncordon(ctx, pod)
 			}
+
+		// K8s node was uncordoned while pod still carries an operator-initiated
+		// cordon. Uncordon the pod and undrain the Slurm node to match.
+		case !nodeIsCordoned && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceOperator:
+			logger.Info("Kubernetes node uncordoned, uncordoning pod and undraining Slurm",
+				"pod", klog.KObj(pod), "node", pod.Spec.NodeName)
+			return r.makePodUncordonAndUndrain(ctx, nodeset, pod, "")
 
 		// If pod is cordoned (K8s-initiated), drain the Slurm node
 		case podIsCordoned:
@@ -938,24 +959,14 @@ func (r *NodeSetReconciler) makePodCordonAndDrain(
 }
 
 // syncSlurmNodeDrain will drain the corresponding Slurm node.
+// If the node is already drained, MakeNodeDrain will update the reason if it
+// differs from the current one.
 func (r *NodeSetReconciler) syncSlurmNodeDrain(
 	ctx context.Context,
 	nodeset *slinkyv1beta1.NodeSet,
 	pod *corev1.Pod,
 	message string,
 ) error {
-	logger := log.FromContext(ctx)
-
-	isDrain, err := r.slurmControl.IsNodeDrain(ctx, nodeset, pod)
-	if err != nil {
-		return err
-	}
-
-	if isDrain {
-		logger.V(1).Info("Node is drain, skipping drain request")
-		return nil
-	}
-
 	reason := fmt.Sprintf("Pod (%s) has been cordoned", klog.KObj(pod))
 	if message != "" {
 		reason = message
@@ -1039,6 +1050,63 @@ func (r *NodeSetReconciler) syncSlurmNodeUndrain(
 	}
 
 	if err := r.slurmControl.MakeNodeUndrain(ctx, nodeset, pod, reason); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// makeNodeCordon cordons the Kubernetes node by setting Unschedulable to true
+// and recording the drain source and reason as annotations.
+func (r *NodeSetReconciler) makeNodeCordon(ctx context.Context, node *corev1.Node, reason string) error {
+	logger := log.FromContext(ctx)
+
+	currentSource := node.GetAnnotations()[slinkyv1beta1.AnnotationNodeCordonSource]
+	currentReason := node.GetAnnotations()[slinkyv1beta1.AnnotationNodeCordonReason]
+	if node.Spec.Unschedulable &&
+		currentSource == slinkyv1beta1.NodeCordonSourceSlurm &&
+		currentReason == reason {
+		return nil
+	}
+
+	toUpdate := node.DeepCopy()
+	logger.Info("Cordon Kubernetes node due to external Slurm drain",
+		"node", node.Name, "reason", reason)
+	toUpdate.Spec.Unschedulable = true
+	if toUpdate.Annotations == nil {
+		toUpdate.Annotations = make(map[string]string)
+	}
+	toUpdate.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] = slinkyv1beta1.NodeCordonSourceSlurm
+	if reason != "" {
+		toUpdate.Annotations[slinkyv1beta1.AnnotationNodeCordonReason] = reason
+	}
+	if err := r.Patch(ctx, toUpdate, client.MergeFrom(node)); err != nil {
+		return err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(node), node); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// makeNodeUncordon uncordons the Kubernetes node by setting Unschedulable to
+// false and removing the cordon source and reason annotations.
+func (r *NodeSetReconciler) makeNodeUncordon(ctx context.Context, node *corev1.Node) error {
+	if !node.Spec.Unschedulable {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	toUpdate := node.DeepCopy()
+	logger.Info("Uncordon Kubernetes node, Slurm drain resolved", "node", node.Name)
+	toUpdate.Spec.Unschedulable = false
+	delete(toUpdate.Annotations, slinkyv1beta1.AnnotationNodeCordonSource)
+	delete(toUpdate.Annotations, slinkyv1beta1.AnnotationNodeCordonReason)
+	if err := r.Patch(ctx, toUpdate, client.MergeFrom(node)); err != nil {
+		return err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(node), node); err != nil {
 		return err
 	}
 
