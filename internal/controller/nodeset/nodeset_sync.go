@@ -352,28 +352,20 @@ func (r *NodeSetReconciler) syncCordon(
 			}
 			return nil
 
-		// If Kubernetes node is cordoned, cordon the pod and drain Slurm
+		// If Kubernetes node is cordoned, cordon the pod and drain Slurm.
+		// When the node also carries a node-cordon-reason annotation, its value
+		// is forwarded as the Slurm drain reason (e.g. "[J] GPU XID - JIRA-12345").
 		case nodeIsCordoned:
-			logger.Info("Kubernetes node cordoned externally, cordoning pod",
-				"pod", klog.KObj(pod), "node", node.Name)
 			reason := fmt.Sprintf("Node (%s) was cordoned, Pod (%s) must be cordoned",
 				pod.Spec.NodeName, klog.KObj(pod))
-
-			// If the node being cordoned has AnnotationNodeCordonReason set, override the default reason
-			node := &corev1.Node{}
-			name := pod.Spec.NodeName
-			key := types.NamespacedName{
-				Name: name,
-			}
-			if err := r.Get(ctx, key, node); err != nil {
-				return fmt.Errorf("failed to get node: %w", err)
-			}
 			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok {
-				logger.V(1).Info("Slurm node drain reason overridden by Kubernetes node annotation",
-					"reason", value)
+				logger.Info("Kubernetes node cordoned with custom reason, cordoning pod",
+					"pod", klog.KObj(pod), "node", node.Name, "reason", value)
 				reason = value
+			} else {
+				logger.Info("Kubernetes node cordoned, cordoning pod",
+					"pod", klog.KObj(pod), "node", node.Name)
 			}
-
 			if err := r.makePodCordonAndDrain(ctx, nodeset, pod, reason); err != nil {
 				return err
 			}
