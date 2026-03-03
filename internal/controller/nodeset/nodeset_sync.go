@@ -28,6 +28,7 @@ import (
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
+	"github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/slurmcontrol"
 	nodesetutils "github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/utils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
@@ -328,10 +329,13 @@ func (r *NodeSetReconciler) syncCordon(
 		if err != nil {
 			return err
 		}
-		ourReason, err := r.slurmControl.IsNodeReasonOurs(ctx, nodeset, pod)
+		// Fetch drain state and reason in a single Slurm API call.
+		// Derive ourReason from the reason prefix to avoid a second GET.
+		slurmIsDrain, slurmReason, err := r.slurmControl.GetNodeDrainInfo(ctx, nodeset, pod)
 		if err != nil {
 			return err
 		}
+		ourReason := slurmcontrol.IsReasonOurs(slurmReason)
 
 		switch {
 		case slurmNodeIsUnresponsive:
@@ -371,10 +375,6 @@ func (r *NodeSetReconciler) syncCordon(
 		// Slurm node has an externally set reason — sync K8s pod annotation
 		// to reflect the Slurm drain state (bidirectional: Slurm → K8s).
 		case !ourReason:
-			slurmIsDrain, slurmReason, err := r.slurmControl.GetNodeDrainInfo(ctx, nodeset, pod)
-			if err != nil {
-				return err
-			}
 			if slurmIsDrain {
 				logger.Info("Slurm node drained externally, syncing cordon to pod and node",
 					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "reason", slurmReason)
@@ -399,10 +399,6 @@ func (r *NodeSetReconciler) syncCordon(
 		// Pod was cordoned due to external Slurm drain. The Slurm reason may
 		// have been cleared (ourReason=true now), so verify Slurm is still drained.
 		case podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm:
-			slurmIsDrain, err := r.slurmControl.IsNodeDrain(ctx, nodeset, pod)
-			if err != nil {
-				return err
-			}
 			if !slurmIsDrain {
 				logger.Info("Slurm node no longer drained, uncordoning pod and node",
 					"pod", klog.KObj(pod))

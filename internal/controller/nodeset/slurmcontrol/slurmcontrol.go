@@ -187,6 +187,12 @@ func (r *realSlurmControl) UpdateNodeTopology(ctx context.Context, nodeset *slin
 
 const nodeReasonPrefix = "slurm-operator:"
 
+// IsReasonOurs returns true if the Slurm node reason was set by the operator
+// (has the "slurm-operator:" prefix) or is empty/absent.
+func IsReasonOurs(reason string) bool {
+	return reason == "" || strings.HasPrefix(reason, nodeReasonPrefix)
+}
+
 // MakeNodeDrain implements SlurmControlInterface.
 func (r *realSlurmControl) MakeNodeDrain(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, reason string) error {
 	logger := log.FromContext(ctx)
