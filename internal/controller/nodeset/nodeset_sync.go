@@ -784,8 +784,7 @@ func (r *NodeSetReconciler) doPodScaleIn(
 	_, err := utils.SlowStartBatch(numDelete, utils.SlowStartInitialBatchSize, func(index int) error {
 		pod := podsToDelete[index]
 		podKey := kubecontroller.PodKey(pod)
-		_, err := r.processCondemned(ctx, nodeset, podsToDelete, index)
-		if err != nil {
+		if err := r.processCondemned(ctx, nodeset, podsToDelete, index); err != nil {
 			r.expectations.DeletionObserved(logger, key, podKey)
 			if !apierrors.IsNotFound(err) {
 				logger.V(2).Info("Failed to process pod, decremented expectations",
@@ -808,54 +807,50 @@ func getPodKeys(pods []*corev1.Pod) []string {
 }
 
 // processCondemned will gracefully terminate the condemned NodeSet pod.
-// It returns (true, nil) when the pod was deleted, (false, nil) when the pod
-// is still draining and needs to be requeued, or (false, err) on error.
 // NOTE: intended to be used by utils.SlowStartBatch().
 func (r *NodeSetReconciler) processCondemned(
 	ctx context.Context,
 	nodeset *slinkyv1beta1.NodeSet,
 	condemned []*corev1.Pod,
 	i int,
-) (deleted bool, err error) {
+) error {
 	logger := klog.FromContext(ctx)
 	pod := condemned[i]
 
 	podKey := client.ObjectKeyFromObject(pod)
 	if err := r.Get(ctx, podKey, pod); err != nil {
-		return false, err
+		return err
 	}
 
 	if podutils.IsTerminating(pod) {
 		logger.V(3).Info("NodeSet Pod is terminating, skipping further processing",
 			"pod", klog.KObj(pod))
-		return false, nil
+		return nil
 	}
 
 	isDrained, err := r.slurmControl.IsNodeDrained(ctx, nodeset, pod)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	if !isDrained {
 		logger.V(2).Info("NodeSet Pod is draining, pending termination for scale-in",
 			"pod", klog.KObj(pod))
-		// Decrement expectations and requeue reconcile because the Slurm node is not drained yet.
-		// We must wait until fully drained to terminate the pod.
 		nodesetKey := objectutils.KeyFunc(nodeset)
 		durationStore.Push(nodesetKey, 30*time.Second)
 		r.expectations.DeletionObserved(logger, nodesetKey, kubecontroller.PodKey(pod))
 		reason := fmt.Sprintf("Pod (%s) was cordoned pending termination", klog.KObj(pod))
-		return false, r.makePodCordonAndDrain(ctx, nodeset, pod, slinkyv1beta1.PodCordonSourceScaleIn, reason)
+		return r.makePodCordonAndDrain(ctx, nodeset, pod, slinkyv1beta1.PodCordonSourceScaleIn, reason)
 	}
 
 	logger.V(2).Info("NodeSet Pod is terminating for scale-in",
 		"pod", klog.KObj(pod))
 	if err := r.podControl.DeleteNodeSetPod(ctx, nodeset, pod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return false, err
+			return err
 		}
 	}
-	return true, nil
+	return nil
 }
 
 // doPodProcessing handles batch processing of NodeSet pods.

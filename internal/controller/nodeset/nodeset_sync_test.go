@@ -1104,12 +1104,8 @@ func TestNodeSetReconciler_processCondemned(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newNodeSetController(tt.fields.Client, tt.fields.ClientMap)
-			deleted, err := r.processCondemned(tt.args.ctx, tt.args.nodeset, tt.args.condemned, tt.args.i)
-			if (err != nil) != tt.wantErr {
+			if err := r.processCondemned(tt.args.ctx, tt.args.nodeset, tt.args.condemned, tt.args.i); (err != nil) != tt.wantErr {
 				t.Errorf("NodeSetReconciler.processCondemned() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && deleted != tt.wantDelete {
-				t.Errorf("NodeSetReconciler.processCondemned() deleted = %v, wantDelete %v", deleted, tt.wantDelete)
 			}
 			pod := tt.args.condemned[tt.args.i]
 			if isDrain, err := r.slurmControl.IsNodeDrain(tt.args.ctx, tt.args.nodeset, pod); err != nil {
