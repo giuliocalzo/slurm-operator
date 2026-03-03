@@ -304,6 +304,14 @@ func (r *NodeSetReconciler) syncCordon(
 	syncCordonFn := func(i int) error {
 		pod := pods[i]
 
+		if pod.Spec.NodeName == "" {
+			return nil
+		}
+
+		if podutils.GetPodCordonSource(pod) == slinkyv1beta1.PodCordonSourceScaleIn {
+			return nil
+		}
+
 		node := &corev1.Node{}
 		nodeKey := types.NamespacedName{Name: pod.Spec.NodeName}
 		if err := r.Get(ctx, nodeKey, node); err != nil {
@@ -338,6 +346,9 @@ func (r *NodeSetReconciler) syncCordon(
 		// the operator in response to an external Slurm drain; the Slurm-specific
 		// case below will handle the lifecycle.
 		case nodeIsCordoned && podCordonSource != slinkyv1beta1.PodCordonSourceSlurm:
+			if node.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] == slinkyv1beta1.NodeCordonSourceSlurm {
+				return nil
+			}
 			reason := fmt.Sprintf("Node (%s) was cordoned, Pod (%s) must be cordoned",
 				pod.Spec.NodeName, klog.KObj(pod))
 			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok {
@@ -370,6 +381,10 @@ func (r *NodeSetReconciler) syncCordon(
 					return err
 				}
 				return r.makePodCordon(ctx, pod, slinkyv1beta1.PodCordonSourceSlurm, reason)
+			}
+			if slurmIsDrain && podIsCordoned {
+				logger.V(2).Info("Slurm node drained externally, pod already cordoned",
+					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "podCordonSource", podCordonSource)
 			}
 			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
 				logger.Info("Slurm node undrained externally, uncordoning pod and node",
@@ -1068,6 +1083,11 @@ func (r *NodeSetReconciler) makeNodeCordon(ctx context.Context, node *corev1.Nod
 // false and removing the cordon source and reason annotations.
 func (r *NodeSetReconciler) makeNodeUncordon(ctx context.Context, node *corev1.Node) error {
 	if !node.Spec.Unschedulable {
+		return nil
+	}
+
+	source := node.GetAnnotations()[slinkyv1beta1.AnnotationNodeCordonSource]
+	if source != slinkyv1beta1.NodeCordonSourceSlurm {
 		return nil
 	}
 
