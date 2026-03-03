@@ -650,6 +650,9 @@ nodesets:
     replicas: 1
     # -- Taint the Kubernetes nodes on which nodeset pods are scheduled with NoExecute.
     taintKubeNodes: false
+    # -- Set pod hostname to the Kubernetes node name. Pods are first scheduled
+    # normally, then recreated with the hostname matching the assigned node name.
+    useNodeNameAsHostname: false
     # -- Use a Pod Disruption Budget to protect pods in this NodeSet when Slurm jobs are running on them
     # Ref: https://kubernetes.io/docs/tasks/run-application/configure-pdb/
     workloadDisruptionProtection: true

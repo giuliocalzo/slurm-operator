@@ -78,6 +78,10 @@ type NodeSetReconciler struct {
 	historyControl historycontrol.HistoryControlInterface
 	eventRecorder  record.EventRecorderLogger
 	expectations   *kubecontroller.UIDTrackingControllerExpectations
+
+	// nodeAssignments stores scheduler-chosen node names for pods that need
+	// recreation with UseNodeNameAsHostname. Keyed by "namespace/name/ordinal".
+	nodeAssignments sync.Map
 }
 
 //+kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets,verbs=get;list;watch;create;update;patch;delete

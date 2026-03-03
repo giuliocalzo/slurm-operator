@@ -291,6 +291,17 @@ spec:
                       Default is RollingUpdate.
                     type: string
                 type: object
+              useNodeNameAsHostname:
+                default: false
+                description: |-
+                  UseNodeNameAsHostname controls whether the pod's hostname is set to the
+                  Kubernetes node name. When enabled, newly created pods are first placed
+                  by the Kubernetes scheduler. Once scheduled, the operator detects the
+                  hostname/node-name mismatch, deletes the pod, and recreates it with the
+                  hostname set to the scheduler-chosen node name (using direct placement
+                  on the same node). This is useful in HPC environments where Slurm node
+                  names should correspond to physical/virtual machine names.
+                type: boolean
               volumeClaimTemplates:
                 description: |-
                   volumeClaimTemplates is a list of claims that pods are allowed to reference.

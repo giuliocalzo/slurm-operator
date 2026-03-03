@@ -108,6 +108,17 @@ type NodeSetSpec struct {
 	// +default:=false
 	TaintKubeNodes bool `json:"taintKubeNodes,omitempty"`
 
+	// UseNodeNameAsHostname controls whether the pod's hostname is set to the
+	// Kubernetes node name. When enabled, newly created pods are first placed
+	// by the Kubernetes scheduler. Once scheduled, the operator detects the
+	// hostname/node-name mismatch, deletes the pod, and recreates it with the
+	// hostname set to the scheduler-chosen node name (using direct placement
+	// on the same node). This is useful in HPC environments where Slurm node
+	// names should correspond to physical/virtual machine names.
+	// +optional
+	// +default:=false
+	UseNodeNameAsHostname bool `json:"useNodeNameAsHostname,omitempty"`
+
 	// WorkloadDisruptionProtection controls whether or not pods in this nodeset which are actively running Slurm jobs are protected by
 	// a Pod Disruption Budget.
 	// See https://kubernetes.io/docs/tasks/run-application/configure-pdb/ for more information.

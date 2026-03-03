@@ -1085,6 +1085,12 @@ func TestNodeSetReconciler_doPodProcessing(t *testing.T) {
 }
 
 func TestNodeSetReconciler_processReplica(t *testing.T) {
+	controller := &slinkyv1beta1.Controller{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "slurm",
+		},
+	}
+
 	type fields struct {
 		Client    client.Client
 		ClientMap *clientmap.ClientMap
@@ -1094,13 +1100,147 @@ func TestNodeSetReconciler_processReplica(t *testing.T) {
 		nodeset *slinkyv1beta1.NodeSet
 		pod     *corev1.Pod
 	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
+	type testCaseFields struct {
+		name           string
+		fields         fields
+		args           args
+		wantErr        bool
+		wantDelete     bool
+		wantAssignment bool
+		wantNodeName   string
+	}
+	tests := []testCaseFields{
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: corev1.NamespaceDefault,
+					Name:      "foo-0",
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodFailed,
+				},
+			}
+			return testCaseFields{
+				name: "failed pod is deleted",
+				fields: fields{
+					Client: fake.NewFakeClient(nodeset, pod),
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pod:     pod,
+				},
+				wantErr:    false,
+				wantDelete: true,
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			nodeset.Spec.UseNodeNameAsHostname = true
+			pod := nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+			makePodHealthy(pod)
+			pod.Spec.NodeName = "worker-node-1"
+			k8sclient := fake.NewFakeClient(nodeset, pod)
+			return testCaseFields{
+				name: "hostname mismatch triggers delete and saves assignment",
+				fields: fields{
+					Client: k8sclient,
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pod:     pod,
+				},
+				wantErr:        false,
+				wantDelete:     true,
+				wantAssignment: true,
+				wantNodeName:   "worker-node-1",
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			nodeset.Spec.UseNodeNameAsHostname = true
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: corev1.NamespaceDefault,
+					Name:      "foo-0",
+					Labels: map[string]string{
+						slinkyv1beta1.LabelNodeSetPodName: "foo-0",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Hostname: "worker-node-1",
+					NodeName: "worker-node-1",
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			}
+			k8sclient := fake.NewFakeClient(nodeset, pod)
+			return testCaseFields{
+				name: "hostname matches node name, no deletion",
+				fields: fields{
+					Client: k8sclient,
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pod:     pod,
+				},
+				wantErr:        false,
+				wantDelete:     false,
+				wantAssignment: false,
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			pod := nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+			makePodHealthy(pod)
+			pod.Spec.NodeName = "worker-node-1"
+			k8sclient := fake.NewFakeClient(nodeset, pod)
+			return testCaseFields{
+				name: "UseNodeNameAsHostname disabled, hostname mismatch is ignored",
+				fields: fields{
+					Client: k8sclient,
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pod:     pod,
+				},
+				wantErr:        false,
+				wantDelete:     false,
+				wantAssignment: false,
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			nodeset.Spec.UseNodeNameAsHostname = true
+			pod := nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+			makePodCreated(pod)
+			k8sclient := fake.NewFakeClient(nodeset, pod)
+			return testCaseFields{
+				name: "pending pod with no nodeName, no deletion",
+				fields: fields{
+					Client: k8sclient,
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pod:     pod,
+				},
+				wantErr:        false,
+				wantDelete:     false,
+				wantAssignment: false,
+			}
+		}(),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1108,8 +1248,101 @@ func TestNodeSetReconciler_processReplica(t *testing.T) {
 			if err := r.processReplica(tt.args.ctx, tt.args.nodeset, tt.args.pod); (err != nil) != tt.wantErr {
 				t.Errorf("NodeSetReconciler.processReplica() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			key := client.ObjectKeyFromObject(tt.args.pod)
+			gotPod := &corev1.Pod{}
+			err := r.Get(tt.args.ctx, key, gotPod)
+			if tt.wantDelete {
+				if err == nil {
+					t.Errorf("expected pod to be deleted but it still exists")
+				} else if !apierrors.IsNotFound(err) {
+					t.Errorf("unexpected error getting pod: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected pod to exist but got error: %v", err)
+				}
+			}
+			if tt.wantAssignment {
+				ordinal := nodesetutils.GetOrdinal(tt.args.pod)
+				nodeName, ok := r.loadNodeAssignment(tt.args.nodeset, ordinal)
+				if !ok {
+					t.Errorf("expected node assignment to be saved for ordinal %d", ordinal)
+				}
+				if nodeName != tt.wantNodeName {
+					t.Errorf("saved node name = %q, want %q", nodeName, tt.wantNodeName)
+				}
+			}
 		})
 	}
+}
+
+func Test_nodeAssignmentKey(t *testing.T) {
+	nodeset := &slinkyv1beta1.NodeSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "test-ns",
+			Name:      "gpu-1",
+		},
+	}
+	got := nodeAssignmentKey(nodeset, 3)
+	want := "test-ns/gpu-1/3"
+	if got != want {
+		t.Errorf("nodeAssignmentKey() = %q, want %q", got, want)
+	}
+}
+
+func TestNodeSetReconciler_nodeAssignment(t *testing.T) {
+	r := &NodeSetReconciler{}
+	nodeset := &slinkyv1beta1.NodeSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: corev1.NamespaceDefault,
+			Name:      "foo",
+		},
+	}
+
+	t.Run("load returns false for missing key", func(t *testing.T) {
+		if name, ok := r.loadNodeAssignment(nodeset, 99); ok {
+			t.Errorf("expected false, got true with name %q", name)
+		}
+	})
+
+	t.Run("save then load returns correct value", func(t *testing.T) {
+		r.saveNodeAssignment(nodeset, 0, "worker-node-1")
+		name, ok := r.loadNodeAssignment(nodeset, 0)
+		if !ok {
+			t.Fatal("expected true, got false")
+		}
+		if name != "worker-node-1" {
+			t.Errorf("got %q, want %q", name, "worker-node-1")
+		}
+	})
+
+	t.Run("load consumes the entry", func(t *testing.T) {
+		r.saveNodeAssignment(nodeset, 1, "worker-node-2")
+		r.loadNodeAssignment(nodeset, 1)
+		if _, ok := r.loadNodeAssignment(nodeset, 1); ok {
+			t.Error("expected false after second load, got true")
+		}
+	})
+
+	t.Run("different nodesets have independent assignments", func(t *testing.T) {
+		nodeset2 := &slinkyv1beta1.NodeSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: corev1.NamespaceDefault,
+				Name:      "bar",
+			},
+		}
+		r.saveNodeAssignment(nodeset, 0, "node-a")
+		r.saveNodeAssignment(nodeset2, 0, "node-b")
+
+		nameA, okA := r.loadNodeAssignment(nodeset, 0)
+		nameB, okB := r.loadNodeAssignment(nodeset2, 0)
+		if !okA || nameA != "node-a" {
+			t.Errorf("nodeset assignment: got (%q, %v), want (\"node-a\", true)", nameA, okA)
+		}
+		if !okB || nameB != "node-b" {
+			t.Errorf("nodeset2 assignment: got (%q, %v), want (\"node-b\", true)", nameB, okB)
+		}
+	})
 }
 
 func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
