@@ -39,8 +39,9 @@ const (
 	// (node cordon) and takes priority over Slurm drain state.
 	AnnotationPodCordonSource = NodeSetPrefix + "pod-cordon-source"
 
-	// AnnotationPodCordonReason stores the Slurm drain reason when the pod was
-	// cordoned due to an external Slurm drain (source = "slurm").
+	// AnnotationPodCordonReason stores a human-readable reason associated with
+	// the pod cordon. It is set for all cordon sources (Slurm drains, operator
+	// node cordons, scale-in) to support deduplication and reason propagation.
 	AnnotationPodCordonReason = NodeSetPrefix + "pod-cordon-reason"
 
 	// PodCordonSourceSlurm is the value of AnnotationPodCordonSource when the

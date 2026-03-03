@@ -375,17 +375,13 @@ func (r *NodeSetReconciler) syncCordon(
 			if err != nil {
 				return err
 			}
-			if slurmIsDrain && !podIsCordoned {
-				logger.Info("Slurm node drained externally, cordoning pod and node",
+			if slurmIsDrain {
+				logger.Info("Slurm node drained externally, syncing cordon to pod and node",
 					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "reason", slurmReason)
 				if err := r.makeNodeCordon(ctx, node, slurmReason); err != nil {
 					return err
 				}
 				return r.makePodCordon(ctx, pod, slinkyv1beta1.PodCordonSourceSlurm, slurmReason)
-			}
-			if slurmIsDrain && podIsCordoned {
-				logger.V(2).Info("Slurm node drained externally, pod already cordoned",
-					"pod", klog.KObj(pod), "node", pod.Spec.NodeName, "podCordonSource", podCordonSource)
 			}
 			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
 				logger.Info("Slurm node undrained externally, uncordoning pod and node",
