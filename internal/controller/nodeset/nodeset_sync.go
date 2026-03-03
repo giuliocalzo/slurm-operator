@@ -348,7 +348,7 @@ func (r *NodeSetReconciler) syncCordon(
 				logger.Info("Kubernetes node cordoned, cordoning pod",
 					"pod", klog.KObj(pod), "node", node.Name)
 			}
-			if err := r.makePodCordonAndDrain(ctx, nodeset, pod, reason); err != nil {
+			if err := r.makePodCordonAndDrain(ctx, nodeset, pod, slinkyv1beta1.PodCordonSourceOperator, reason); err != nil {
 				return err
 			}
 
@@ -369,7 +369,7 @@ func (r *NodeSetReconciler) syncCordon(
 				if err := r.makeNodeCordon(ctx, node, reason); err != nil {
 					return err
 				}
-				return r.makePodCordonFromSlurm(ctx, pod, reason)
+				return r.makePodCordon(ctx, pod, slinkyv1beta1.PodCordonSourceSlurm, reason)
 			}
 			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
 				logger.Info("Slurm node undrained externally, uncordoning pod and node",
@@ -832,7 +832,7 @@ func (r *NodeSetReconciler) processCondemned(
 		durationStore.Push(nodesetKey, 30*time.Second)
 		r.expectations.DeletionObserved(logger, nodesetKey, kubecontroller.PodKey(pod))
 		reason := fmt.Sprintf("Pod (%s) was cordoned pending termination", klog.KObj(pod))
-		return r.makePodCordonAndDrain(ctx, nodeset, pod, reason)
+		return r.makePodCordonAndDrain(ctx, nodeset, pod, slinkyv1beta1.PodCordonSourceScaleIn, reason)
 	}
 
 	logger.V(2).Info("NodeSet Pod is terminating for scale-in",
@@ -906,48 +906,15 @@ func (r *NodeSetReconciler) processReplica(
 	return r.podControl.UpdateNodeSetPod(ctx, nodeset, pod)
 }
 
-// makePodCordonFromSlurm will cordon the pod and mark it as originating from an external Slurm drain.
-// The Slurm drain reason is stored on the pod so it is visible from the K8s side.
-// This prevents the operator from re-issuing a drain command to Slurm on subsequent reconciles.
-func (r *NodeSetReconciler) makePodCordonFromSlurm(
-	ctx context.Context,
-	pod *corev1.Pod,
-	reason string,
-) error {
-	logger := log.FromContext(ctx)
-
-	if podutils.IsPodCordon(pod) && podutils.GetPodCordonSource(pod) == slinkyv1beta1.PodCordonSourceSlurm {
-		return nil
-	}
-
-	toUpdate := pod.DeepCopy()
-	logger.Info("Cordon Pod due to external Slurm drain", "Pod", klog.KObj(toUpdate), "reason", reason)
-	if toUpdate.Annotations == nil {
-		toUpdate.Annotations = make(map[string]string)
-	}
-	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordon] = "true"
-	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = slinkyv1beta1.PodCordonSourceSlurm
-	if reason != "" {
-		toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonReason] = reason
-	}
-	if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
-		return err
-	}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // makePodCordonAndDrain will cordon the pod and drain the corresponding Slurm node.
 func (r *NodeSetReconciler) makePodCordonAndDrain(
 	ctx context.Context,
 	nodeset *slinkyv1beta1.NodeSet,
 	pod *corev1.Pod,
+	source string,
 	reason string,
 ) error {
-	if err := r.makePodCordon(ctx, pod); err != nil {
+	if err := r.makePodCordon(ctx, pod, source, reason); err != nil {
 		return err
 	}
 
@@ -979,24 +946,31 @@ func (r *NodeSetReconciler) syncSlurmNodeDrain(
 	return nil
 }
 
-// makePodCordon will cordon the pod.
+// makePodCordon will cordon the pod with the given source and reason.
+// It skips the patch when the pod is already cordoned with the same source and reason.
 func (r *NodeSetReconciler) makePodCordon(
 	ctx context.Context,
 	pod *corev1.Pod,
+	source, reason string,
 ) error {
 	logger := log.FromContext(ctx)
 
-	if podutils.IsPodCordon(pod) {
+	if podutils.IsPodCordon(pod) &&
+		podutils.GetPodCordonSource(pod) == source &&
+		pod.Annotations[slinkyv1beta1.AnnotationPodCordonReason] == reason {
 		return nil
 	}
 
 	toUpdate := pod.DeepCopy()
-	logger.Info("Cordon Pod, pending deletion", "Pod", klog.KObj(toUpdate))
+	logger.Info("Cordon Pod", "Pod", klog.KObj(toUpdate), "source", source, "reason", reason)
 	if toUpdate.Annotations == nil {
 		toUpdate.Annotations = make(map[string]string)
 	}
 	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordon] = "true"
-	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = slinkyv1beta1.PodCordonSourceOperator
+	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = source
+	if reason != "" {
+		toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonReason] = reason
+	}
 	if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
 		return err
 	}

@@ -50,6 +50,11 @@ const (
 	// PodCordonSourceOperator is the value of AnnotationPodCordonSource when the
 	// cordon originates from a Kubernetes node cordon detected by the operator.
 	PodCordonSourceOperator = "operator"
+
+	// PodCordonSourceScaleIn is the value of AnnotationPodCordonSource when the
+	// cordon originates from scale-in. These pods are fully managed by
+	// processCondemned and should be skipped by syncCordon.
+	PodCordonSourceScaleIn = "scale-in"
 )
 
 // Well Known Annotations for Objects of type corev1.Node

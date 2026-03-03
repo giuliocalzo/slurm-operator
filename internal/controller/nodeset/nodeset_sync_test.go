@@ -1128,6 +1128,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 		ctx     context.Context
 		nodeset *slinkyv1beta1.NodeSet
 		pod     *corev1.Pod
+		source  string
 		reason  string
 	}
 	tests := []struct {
@@ -1159,6 +1160,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 				ctx:     context.TODO(),
 				nodeset: nodeset.DeepCopy(),
 				pod:     pod.DeepCopy(),
+				source:  slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr: false,
 		},
@@ -1186,6 +1188,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 				ctx:     context.TODO(),
 				nodeset: nodeset.DeepCopy(),
 				pod:     pod.DeepCopy(),
+				source:  slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr: false,
 		},
@@ -1222,6 +1225,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 				ctx:     context.TODO(),
 				nodeset: nodeset.DeepCopy(),
 				pod:     pod.DeepCopy(),
+				source:  slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr: true,
 		},
@@ -1252,6 +1256,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 				ctx:     context.TODO(),
 				nodeset: nodeset.DeepCopy(),
 				pod:     pod.DeepCopy(),
+				source:  slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr: true,
 		},
@@ -1259,7 +1264,7 @@ func TestNodeSetReconciler_makePodCordonAndDrain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newNodeSetController(tt.fields.Client, tt.fields.ClientMap)
-			if err := r.makePodCordonAndDrain(tt.args.ctx, tt.args.nodeset, tt.args.pod, tt.args.reason); (err != nil) != tt.wantErr {
+			if err := r.makePodCordonAndDrain(tt.args.ctx, tt.args.nodeset, tt.args.pod, tt.args.source, tt.args.reason); (err != nil) != tt.wantErr {
 				t.Errorf("NodeSetReconciler.makePodCordonAndDrain() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			// Check Pod Annotations
@@ -1302,7 +1307,8 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pod-1",
 			Annotations: map[string]string{
-				slinkyv1beta1.AnnotationPodCordon: "true",
+				slinkyv1beta1.AnnotationPodCordon:       "true",
+				slinkyv1beta1.AnnotationPodCordonSource: slinkyv1beta1.PodCordonSourceOperator,
 			},
 		},
 	}
@@ -1311,8 +1317,10 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 		ClientMap *clientmap.ClientMap
 	}
 	type args struct {
-		ctx context.Context
-		pod *corev1.Pod
+		ctx    context.Context
+		pod    *corev1.Pod
+		source string
+		reason string
 	}
 	tests := []struct {
 		name       string
@@ -1320,30 +1328,47 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 		args       args
 		wantErr    bool
 		wantSource string
+		wantReason string
 	}{
-
 		{
 			name: "NotFound",
 			fields: fields{
 				Client: fake.NewFakeClient(),
 			},
 			args: args{
-				ctx: context.TODO(),
-				pod: pod1.DeepCopy(),
+				ctx:    context.TODO(),
+				pod:    pod1.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr: true,
 		},
 		{
-			name: "cordoned",
+			name: "already cordoned with same source and reason",
 			fields: fields{
 				Client: fake.NewFakeClient(pod2.DeepCopy()),
 			},
 			args: args{
-				ctx: context.TODO(),
-				pod: pod2.DeepCopy(),
+				ctx:    context.TODO(),
+				pod:    pod2.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr:    false,
-			wantSource: "",
+			wantSource: slinkyv1beta1.PodCordonSourceOperator,
+		},
+		{
+			name: "already cordoned with different reason triggers update",
+			fields: fields{
+				Client: fake.NewFakeClient(pod2.DeepCopy()),
+			},
+			args: args{
+				ctx:    context.TODO(),
+				pod:    pod2.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceOperator,
+				reason: "new reason",
+			},
+			wantErr:    false,
+			wantSource: slinkyv1beta1.PodCordonSourceOperator,
+			wantReason: "new reason",
 		},
 		{
 			name: "not cordoned",
@@ -1351,17 +1376,48 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 				Client: fake.NewFakeClient(pod1.DeepCopy()),
 			},
 			args: args{
-				ctx: context.TODO(),
-				pod: pod1.DeepCopy(),
+				ctx:    context.TODO(),
+				pod:    pod1.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceOperator,
 			},
 			wantErr:    false,
 			wantSource: slinkyv1beta1.PodCordonSourceOperator,
+		},
+		{
+			name: "not cordoned with slurm source",
+			fields: fields{
+				Client: fake.NewFakeClient(pod1.DeepCopy()),
+			},
+			args: args{
+				ctx:    context.TODO(),
+				pod:    pod1.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceSlurm,
+				reason: "external drain",
+			},
+			wantErr:    false,
+			wantSource: slinkyv1beta1.PodCordonSourceSlurm,
+			wantReason: "external drain",
+		},
+		{
+			name: "not cordoned with scale-in source",
+			fields: fields{
+				Client: fake.NewFakeClient(pod1.DeepCopy()),
+			},
+			args: args{
+				ctx:    context.TODO(),
+				pod:    pod1.DeepCopy(),
+				source: slinkyv1beta1.PodCordonSourceScaleIn,
+				reason: "scale-in",
+			},
+			wantErr:    false,
+			wantSource: slinkyv1beta1.PodCordonSourceScaleIn,
+			wantReason: "scale-in",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newNodeSetController(tt.fields.Client, tt.fields.ClientMap)
-			if err := r.makePodCordon(tt.args.ctx, tt.args.pod); (err != nil) != tt.wantErr {
+			if err := r.makePodCordon(tt.args.ctx, tt.args.pod, tt.args.source, tt.args.reason); (err != nil) != tt.wantErr {
 				t.Errorf("NodeSetReconciler.makePodCordon() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			// Check Pod Annotations
@@ -1376,6 +1432,9 @@ func TestNodeSetReconciler_makePodCordon(t *testing.T) {
 				}
 				if gotSource := podutils.GetPodCordonSource(gotPod); gotSource != tt.wantSource {
 					t.Errorf("GetPodCordonSource() = %v, want %v", gotSource, tt.wantSource)
+				}
+				if gotReason := gotPod.Annotations[slinkyv1beta1.AnnotationPodCordonReason]; gotReason != tt.wantReason {
+					t.Errorf("AnnotationPodCordonReason = %v, want %v", gotReason, tt.wantReason)
 				}
 			}
 		})
