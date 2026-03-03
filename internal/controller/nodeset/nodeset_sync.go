@@ -345,10 +345,14 @@ func (r *NodeSetReconciler) syncCordon(
 		// Skip when the pod source is "slurm" because the node cordon was set by
 		// the operator in response to an external Slurm drain; the Slurm-specific
 		// case below will handle the lifecycle.
-		case nodeIsCordoned && podCordonSource != slinkyv1beta1.PodCordonSourceSlurm:
-			if node.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] == slinkyv1beta1.NodeCordonSourceSlurm {
-				return nil
-			}
+		// Also skip when the node itself carries node-cordon-source: "slurm",
+		// which means the operator cordoned the node for an external Slurm drain.
+		// Without this, a partial failure (makeNodeCordon succeeds but
+		// makePodCordon fails) would let this case match on retry and return nil,
+		// permanently blocking case !ourReason from cordoning the pod.
+		case nodeIsCordoned &&
+			podCordonSource != slinkyv1beta1.PodCordonSourceSlurm &&
+			node.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] != slinkyv1beta1.NodeCordonSourceSlurm:
 			reason := fmt.Sprintf("Node (%s) was cordoned, Pod (%s) must be cordoned",
 				pod.Spec.NodeName, klog.KObj(pod))
 			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok {
