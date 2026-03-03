@@ -1260,12 +1260,13 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 		pod     *corev1.Pod
 	}
 	tests := []struct {
-		name       string
-		fields     fields
-		args       args
-		wantDrain  bool
-		wantReason string
-		wantErr    bool
+		name             string
+		fields           fields
+		args             args
+		wantDrain        bool
+		wantReason       string
+		wantUnresponsive bool
+		wantErr          bool
 	}{
 		{
 			name: "idle node, no reason",
@@ -1288,8 +1289,9 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			wantDrain:  false,
-			wantReason: "",
+			wantDrain:        false,
+			wantReason:       "",
+			wantUnresponsive: false,
 		},
 		{
 			name: "drained with external reason",
@@ -1314,8 +1316,9 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			wantDrain:  true,
-			wantReason: "maintenance window",
+			wantDrain:        true,
+			wantReason:       "maintenance window",
+			wantUnresponsive: false,
 		},
 		{
 			name: "drained with operator reason",
@@ -1340,11 +1343,38 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			wantDrain:  true,
-			wantReason: nodeReasonPrefix + " Pod (default/foo-0) was cordoned",
+			wantDrain:        true,
+			wantReason:       nodeReasonPrefix + " Pod (default/foo-0) was cordoned",
+			wantUnresponsive: false,
 		},
 		{
-			name: "no client returns conservative drain=true",
+			name: "down and not responding is unresponsive",
+			fields: func() fields {
+				node := &types.V0044Node{
+					V0044Node: api.V0044Node{
+						Name: ptr.To(nodesetutils.GetNodeName(pod)),
+						State: ptr.To([]api.V0044NodeState{
+							api.V0044NodeStateDOWN,
+						}),
+						Reason: ptr.To("Not responding"),
+					},
+				}
+				sclient := fake.NewClientBuilder().WithObjects(node).Build()
+				return fields{
+					clientMap: newSlurmClientMap(controller.Name, sclient),
+				}
+			}(),
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        false,
+			wantReason:       "Not responding",
+			wantUnresponsive: true,
+		},
+		{
+			name: "no client returns conservative drain=true unresponsive=true",
 			fields: fields{
 				clientMap: clientmap.NewClientMap(),
 			},
@@ -1353,8 +1383,9 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			wantDrain:  true,
-			wantReason: "",
+			wantDrain:        true,
+			wantReason:       "",
+			wantUnresponsive: true,
 		},
 	}
 	for _, tt := range tests {
@@ -1362,7 +1393,7 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 			r := &realSlurmControl{
 				clientMap: tt.fields.clientMap,
 			}
-			gotDrain, gotReason, err := r.GetNodeDrainInfo(tt.args.ctx, tt.args.nodeset, tt.args.pod)
+			gotDrain, gotReason, gotUnresponsive, err := r.GetNodeDrainInfo(tt.args.ctx, tt.args.nodeset, tt.args.pod)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("realSlurmControl.GetNodeDrainInfo() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1371,6 +1402,9 @@ func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 			}
 			if gotReason != tt.wantReason {
 				t.Errorf("realSlurmControl.GetNodeDrainInfo() reason = %v, want %v", gotReason, tt.wantReason)
+			}
+			if gotUnresponsive != tt.wantUnresponsive {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() unresponsive = %v, want %v", gotUnresponsive, tt.wantUnresponsive)
 			}
 		})
 	}

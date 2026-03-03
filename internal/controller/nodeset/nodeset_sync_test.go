@@ -977,7 +977,7 @@ func TestNodeSetReconciler_processCondemned(t *testing.T) {
 				},
 				wantErr:    false,
 				wantDrain:  true,
-				wantDelete: false,
+				wantDelete: true,
 			}
 		}(),
 		func() testCaseFields {
@@ -1104,8 +1104,12 @@ func TestNodeSetReconciler_processCondemned(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newNodeSetController(tt.fields.Client, tt.fields.ClientMap)
-			if err := r.processCondemned(tt.args.ctx, tt.args.nodeset, tt.args.condemned, tt.args.i); (err != nil) != tt.wantErr {
+			deleted, err := r.processCondemned(tt.args.ctx, tt.args.nodeset, tt.args.condemned, tt.args.i)
+			if (err != nil) != tt.wantErr {
 				t.Errorf("NodeSetReconciler.processCondemned() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && deleted != tt.wantDelete {
+				t.Errorf("NodeSetReconciler.processCondemned() deleted = %v, wantDelete %v", deleted, tt.wantDelete)
 			}
 			pod := tt.args.condemned[tt.args.i]
 			if isDrain, err := r.slurmControl.IsNodeDrain(tt.args.ctx, tt.args.nodeset, pod); err != nil {
@@ -1186,7 +1190,7 @@ func TestNodeSetReconciler_doPodProcessing(t *testing.T) {
 			}
 			slurmClient := newFakeClientList(sinterceptor.Funcs{}, slurmNodeList)
 			return testCaseFields{
-				name: "cordoned pod on uncordoned node is uncordoned",
+				name: "operator-sourced cordon is preserved by doPodProcessing",
 				fields: fields{
 					Client:    k8sclient,
 					ClientMap: newClientMap(controller.Name, slurmClient),
@@ -1198,7 +1202,7 @@ func TestNodeSetReconciler_doPodProcessing(t *testing.T) {
 					hash:    hash,
 				},
 				wantErr:     false,
-				wantCordon:  false,
+				wantCordon:  true,
 				checkPodIdx: 0,
 			}
 		}(),
