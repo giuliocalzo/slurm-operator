@@ -138,7 +138,7 @@ The `pod-cordon-source` annotation prevents infinite loops:
 | Annotation | Value | Description |
 |---|---|---|
 | `pod-cordon` | `"true"` | Marks the pod for Slurm node drain. |
-| `pod-cordon-source` | `"operator"` / `"slurm"` | Origin of the cordon. `"operator"` = K8s-initiated (higher priority). `"slurm"` = external Slurm drain. |
+| `pod-cordon-source` | `"operator"` / `"slurm"` / `"scale-in"` | Origin of the cordon. `"operator"` = K8s-initiated (higher priority). `"slurm"` = external Slurm drain. `"scale-in"` = scale-in operation. |
 | `pod-cordon-reason` | string | Drain reason associated with the pod cordon. Set for all cordon sources (Slurm drains, K8s-initiated cordons, scale-in). |
 | `pod-deletion-cost` | integer | Pod deletion order during scale-in. Lower cost deleted first. |
 | `pod-deadline` | RFC 3339 timestamp | Expected workload completion time. Earlier deadlines preferred for deletion. |

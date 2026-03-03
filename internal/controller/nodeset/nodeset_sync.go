@@ -383,12 +383,15 @@ func (r *NodeSetReconciler) syncCordon(
 				}
 				return r.makePodCordon(ctx, pod, slinkyv1beta1.PodCordonSourceSlurm, slurmReason)
 			}
-			if !slurmIsDrain && podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
-				logger.Info("Slurm node undrained externally, uncordoning pod and node",
+			// Slurm node is not drained. Clean up any operator-set node
+			// cordon (handles partial failures where pod was uncordoned but
+			// node was not) and uncordon the pod if still slurm-sourced.
+			if err := r.makeNodeUncordon(ctx, node); err != nil {
+				return err
+			}
+			if podIsCordoned && podCordonSource == slinkyv1beta1.PodCordonSourceSlurm {
+				logger.Info("Slurm node undrained externally, uncordoning pod",
 					"pod", klog.KObj(pod), "node", pod.Spec.NodeName)
-				if err := r.makeNodeUncordon(ctx, node); err != nil {
-					return err
-				}
 				return r.makePodUncordon(ctx, pod)
 			}
 			return nil
@@ -408,6 +411,7 @@ func (r *NodeSetReconciler) syncCordon(
 				}
 				return r.makePodUncordon(ctx, pod)
 			}
+			return nil
 
 		// K8s node was uncordoned while pod still carries an operator-initiated
 		// cordon. Uncordon the pod and undrain the Slurm node to match.
@@ -1028,7 +1032,7 @@ func (r *NodeSetReconciler) syncSlurmNodeUndrain(
 	}
 
 	if !isDrain {
-		logger.V(1).Info("Node is undrain, skipping undrain request")
+		logger.V(1).Info("Node is not drained, skipping undrain request")
 		return nil
 	}
 
