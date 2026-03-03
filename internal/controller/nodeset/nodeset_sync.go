@@ -355,7 +355,7 @@ func (r *NodeSetReconciler) syncCordon(
 			node.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] != slinkyv1beta1.NodeCordonSourceSlurm:
 			reason := fmt.Sprintf("Node (%s) was cordoned, Pod (%s) must be cordoned",
 				pod.Spec.NodeName, klog.KObj(pod))
-			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok {
+			if value, ok := node.Annotations[slinkyv1beta1.AnnotationNodeCordonReason]; ok && value != "" {
 				logger.Info("Kubernetes node cordoned with custom reason, cordoning pod",
 					"pod", klog.KObj(pod), "node", node.Name, "reason", value)
 				reason = value
@@ -366,6 +366,7 @@ func (r *NodeSetReconciler) syncCordon(
 			if err := r.makePodCordonAndDrain(ctx, nodeset, pod, slinkyv1beta1.PodCordonSourceOperator, reason); err != nil {
 				return err
 			}
+			return nil
 
 		// Slurm node has an externally set reason — sync K8s pod annotation
 		// to reflect the Slurm drain state (bidirectional: Slurm → K8s).
@@ -989,6 +990,8 @@ func (r *NodeSetReconciler) makePodCordon(
 	toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = source
 	if reason != "" {
 		toUpdate.Annotations[slinkyv1beta1.AnnotationPodCordonReason] = reason
+	} else {
+		delete(toUpdate.Annotations, slinkyv1beta1.AnnotationPodCordonReason)
 	}
 	if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
 		return err
@@ -1072,6 +1075,8 @@ func (r *NodeSetReconciler) makeNodeCordon(ctx context.Context, node *corev1.Nod
 	toUpdate.Annotations[slinkyv1beta1.AnnotationNodeCordonSource] = slinkyv1beta1.NodeCordonSourceSlurm
 	if reason != "" {
 		toUpdate.Annotations[slinkyv1beta1.AnnotationNodeCordonReason] = reason
+	} else {
+		delete(toUpdate.Annotations, slinkyv1beta1.AnnotationNodeCordonReason)
 	}
 	if err := r.Patch(ctx, toUpdate, client.MergeFrom(node)); err != nil {
 		return err
@@ -1111,7 +1116,7 @@ func (r *NodeSetReconciler) makeNodeUncordon(ctx context.Context, node *corev1.N
 	return nil
 }
 
-// makePodUncordonAndUndrain will uncordon the pod.
+// makePodUncordon will uncordon the pod and remove cordon annotations.
 func (r *NodeSetReconciler) makePodUncordon(ctx context.Context, pod *corev1.Pod) error {
 	logger := log.FromContext(ctx)
 
