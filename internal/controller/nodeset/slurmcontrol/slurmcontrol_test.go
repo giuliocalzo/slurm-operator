@@ -1242,7 +1242,7 @@ func Test_realSlurmControl_IsNodeReasonOurs(t *testing.T) {
 	}
 }
 
-func Test_realSlurmControl_GetNodeReason(t *testing.T) {
+func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
 	ctx := context.Background()
 	controller := &slinkyv1beta1.Controller{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1260,14 +1260,15 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 		pod     *corev1.Pod
 	}
 	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    string
-		wantErr bool
+		name       string
+		fields     fields
+		args       args
+		wantDrain  bool
+		wantReason string
+		wantErr    bool
 	}{
 		{
-			name: "no reason",
+			name: "idle node, no reason",
 			fields: func() fields {
 				node := &types.V0044Node{
 					V0044Node: api.V0044Node{
@@ -1287,10 +1288,11 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			want: "",
+			wantDrain:  false,
+			wantReason: "",
 		},
 		{
-			name: "external reason",
+			name: "drained with external reason",
 			fields: func() fields {
 				node := &types.V0044Node{
 					V0044Node: api.V0044Node{
@@ -1312,10 +1314,11 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			want: "maintenance window",
+			wantDrain:  true,
+			wantReason: "maintenance window",
 		},
 		{
-			name: "operator reason",
+			name: "drained with operator reason",
 			fields: func() fields {
 				node := &types.V0044Node{
 					V0044Node: api.V0044Node{
@@ -1337,10 +1340,11 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			want: nodeReasonPrefix + " Pod (default/foo-0) was cordoned",
+			wantDrain:  true,
+			wantReason: nodeReasonPrefix + " Pod (default/foo-0) was cordoned",
 		},
 		{
-			name: "no client",
+			name: "no client returns conservative drain=true",
 			fields: fields{
 				clientMap: clientmap.NewClientMap(),
 			},
@@ -1349,7 +1353,8 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 				nodeset: nodeset,
 				pod:     pod,
 			},
-			want: "",
+			wantDrain:  true,
+			wantReason: "",
 		},
 	}
 	for _, tt := range tests {
@@ -1357,12 +1362,15 @@ func Test_realSlurmControl_GetNodeReason(t *testing.T) {
 			r := &realSlurmControl{
 				clientMap: tt.fields.clientMap,
 			}
-			got, err := r.GetNodeReason(tt.args.ctx, tt.args.nodeset, tt.args.pod)
+			gotDrain, gotReason, err := r.GetNodeDrainInfo(tt.args.ctx, tt.args.nodeset, tt.args.pod)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("realSlurmControl.GetNodeReason() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Errorf("realSlurmControl.GetNodeReason() = %v, want %v", got, tt.want)
+			if gotDrain != tt.wantDrain {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() drain = %v, want %v", gotDrain, tt.wantDrain)
+			}
+			if gotReason != tt.wantReason {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() reason = %v, want %v", gotReason, tt.wantReason)
 			}
 		})
 	}

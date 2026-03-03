@@ -792,14 +792,11 @@ func TestNodeSetReconciler_doPodScaleIn(t *testing.T) {
 				pod := tt.args.podsToDelete[0]
 				gotPod := &corev1.Pod{}
 				if err := r.Get(tt.args.ctx, client.ObjectKeyFromObject(pod), gotPod); err != nil {
-					if !apierrors.IsNotFound(err) {
-						t.Errorf("client.Get() error = %v", err)
-					}
-				} else {
-					gotSource := podutils.GetPodCordonSource(gotPod)
-					if gotSource != tt.wantSource {
-						t.Errorf("GetPodCordonSource() = %v, want %v", gotSource, tt.wantSource)
-					}
+					t.Fatalf("client.Get() error = %v", err)
+				}
+				gotSource := podutils.GetPodCordonSource(gotPod)
+				if gotSource != tt.wantSource {
+					t.Errorf("GetPodCordonSource() = %v, want %v", gotSource, tt.wantSource)
 				}
 			}
 		})

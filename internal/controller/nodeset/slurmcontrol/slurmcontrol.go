@@ -51,8 +51,9 @@ type SlurmControlInterface interface {
 	IsNodeDownForUnresponsive(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (bool, error)
 	// IsNodeReasonOurs reports if the node reason was set by the operator.
 	IsNodeReasonOurs(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (bool, error)
-	// GetNodeReason returns the Slurm node's reason string.
-	GetNodeReason(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (string, error)
+	// GetNodeDrainInfo returns whether the Slurm node is in the DRAIN state
+	// and its reason string in a single API call.
+	GetNodeDrainInfo(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (isDrain bool, reason string, err error)
 	// CalculateNodeStatus returns the current state of the registered slurm nodes.
 	CalculateNodeStatus(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pods []*corev1.Pod) (SlurmNodeStatus, error)
 	// GetNodeDeadlines returns a map of node to its deadline time.Time calculated from running jobs.
@@ -397,27 +398,33 @@ func (r *realSlurmControl) IsNodeReasonOurs(ctx context.Context, nodeset *slinky
 	return true, nil
 }
 
-// GetNodeReason implements SlurmControlInterface.
-func (r *realSlurmControl) GetNodeReason(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (string, error) {
+// GetNodeDrainInfo implements SlurmControlInterface.
+// When the Slurm client is unavailable or the node cannot be fetched, it
+// conservatively returns isDrain=true to prevent the operator from
+// uncordoning pods based on incomplete information. This matches the
+// convention used by IsNodeDrain and other Is* methods.
+func (r *realSlurmControl) GetNodeDrainInfo(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (bool, string, error) {
 	logger := log.FromContext(ctx)
 
 	slurmClient := r.lookupClient(nodeset)
 	if slurmClient == nil {
-		logger.V(2).Info("no client for nodeset, cannot do GetNodeReason()",
+		logger.V(2).Info("no client for nodeset, cannot do GetNodeDrainInfo()",
 			"pod", klog.KObj(pod))
-		return "", nil
+		return true, "", nil
 	}
 
 	slurmNode := &slurmtypes.V0044Node{}
 	key := slurmobject.ObjectKey(nodesetutils.GetNodeName(pod))
 	if err := slurmClient.Get(ctx, key, slurmNode); err != nil {
 		if tolerateError(err) {
-			return "", nil
+			return true, "", nil
 		}
-		return "", err
+		return false, "", err
 	}
 
-	return ptr.Deref(slurmNode.Reason, ""), nil
+	isDrain := slurmNode.GetStateAsSet().Has(slurmapi.V0044NodeStateDRAIN)
+	reason := ptr.Deref(slurmNode.Reason, "")
+	return isDrain, reason, nil
 }
 
 type SlurmNodeStatus struct {
