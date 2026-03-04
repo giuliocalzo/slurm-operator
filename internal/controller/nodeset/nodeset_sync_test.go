@@ -3039,6 +3039,68 @@ func Test_syncCordon_externalSlurmDrain(t *testing.T) {
 			wantNodeReason: "",
 			checkPodName:   nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "").Name,
 		},
+		{
+			name: "slurm-sourced pod on admin-cordoned node stays slurm-managed",
+			fields: func() fields {
+				pod := nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+				pod.Spec.NodeName = "test-node"
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordon] = "true"
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = slinkyv1beta1.PodCordonSourceSlurm
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordonReason] = "Fatal XID 79"
+				return fields{
+					Client: fake.NewFakeClient(
+						nodeset.DeepCopy(),
+						pod.DeepCopy(),
+						&corev1.Node{
+							ObjectMeta: metav1.ObjectMeta{
+								Name: "test-node",
+							},
+							Spec: corev1.NodeSpec{
+								Unschedulable: true,
+							},
+						},
+					),
+					ClientMap: func() *clientmap.ClientMap {
+						nodeList := &slurmtypes.V0044NodeList{
+							Items: []slurmtypes.V0044Node{
+								{
+									V0044Node: slurmapi.V0044Node{
+										Name: ptr.To(nodesetutils.GetNodeName(pod)),
+										State: ptr.To([]slurmapi.V0044NodeState{
+											slurmapi.V0044NodeStateIDLE,
+											slurmapi.V0044NodeStateDRAIN,
+										}),
+										Reason: ptr.To("Fatal XID 79"),
+									},
+								},
+							},
+						}
+						sclient := newFakeClientList(sinterceptor.Funcs{}, nodeList)
+						return newClientMap(controller.Name, sclient)
+					}(),
+				}
+			}(),
+			args: func() args {
+				pod := nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+				pod.Spec.NodeName = "test-node"
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordon] = "true"
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordonSource] = slinkyv1beta1.PodCordonSourceSlurm
+				pod.Annotations[slinkyv1beta1.AnnotationPodCordonReason] = "Fatal XID 79"
+				return args{
+					ctx:     context.TODO(),
+					nodeset: nodeset.DeepCopy(),
+					pods:    []*corev1.Pod{pod},
+				}
+			}(),
+			wantErr:        false,
+			wantCordon:     true,
+			wantSource:     slinkyv1beta1.PodCordonSourceSlurm,
+			wantReason:     "Fatal XID 79",
+			wantNodeCordon: true,
+			wantNodeSource: slinkyv1beta1.NodeCordonSourceSlurm,
+			wantNodeReason: "Fatal XID 79",
+			checkPodName:   nodesetutils.NewNodeSetPod(fake.NewFakeClient(), nodeset, controller, 0, "").Name,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
