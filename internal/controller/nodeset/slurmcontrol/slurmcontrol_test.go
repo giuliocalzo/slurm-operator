@@ -1242,6 +1242,174 @@ func Test_realSlurmControl_IsNodeReasonOurs(t *testing.T) {
 	}
 }
 
+func Test_realSlurmControl_GetNodeDrainInfo(t *testing.T) {
+	ctx := context.Background()
+	controller := &slinkyv1beta1.Controller{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "slurm",
+		},
+	}
+	nodeset := newNodeSet("foo", controller.Name, 1)
+	pod := nodesetutils.NewNodeSetPod(kubefake.NewFakeClient(), nodeset, controller, 0, "")
+	type fields struct {
+		clientMap *clientmap.ClientMap
+	}
+	type args struct {
+		ctx     context.Context
+		nodeset *slinkyv1beta1.NodeSet
+		pod     *corev1.Pod
+	}
+	tests := []struct {
+		name             string
+		fields           fields
+		args             args
+		wantDrain        bool
+		wantReason       string
+		wantUnresponsive bool
+		wantErr          bool
+	}{
+		{
+			name: "idle node, no reason",
+			fields: func() fields {
+				node := &types.V0044Node{
+					V0044Node: api.V0044Node{
+						Name: ptr.To(nodesetutils.GetNodeName(pod)),
+						State: ptr.To([]api.V0044NodeState{
+							api.V0044NodeStateIDLE,
+						}),
+					},
+				}
+				sclient := fake.NewClientBuilder().WithObjects(node).Build()
+				return fields{
+					clientMap: newSlurmClientMap(controller.Name, sclient),
+				}
+			}(),
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        false,
+			wantReason:       "",
+			wantUnresponsive: false,
+		},
+		{
+			name: "drained with external reason",
+			fields: func() fields {
+				node := &types.V0044Node{
+					V0044Node: api.V0044Node{
+						Name: ptr.To(nodesetutils.GetNodeName(pod)),
+						State: ptr.To([]api.V0044NodeState{
+							api.V0044NodeStateIDLE,
+							api.V0044NodeStateDRAIN,
+						}),
+						Reason: ptr.To("maintenance window"),
+					},
+				}
+				sclient := fake.NewClientBuilder().WithObjects(node).Build()
+				return fields{
+					clientMap: newSlurmClientMap(controller.Name, sclient),
+				}
+			}(),
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        true,
+			wantReason:       "maintenance window",
+			wantUnresponsive: false,
+		},
+		{
+			name: "drained with operator reason",
+			fields: func() fields {
+				node := &types.V0044Node{
+					V0044Node: api.V0044Node{
+						Name: ptr.To(nodesetutils.GetNodeName(pod)),
+						State: ptr.To([]api.V0044NodeState{
+							api.V0044NodeStateIDLE,
+							api.V0044NodeStateDRAIN,
+						}),
+						Reason: ptr.To(nodeReasonPrefix + " Pod (default/foo-0) was cordoned"),
+					},
+				}
+				sclient := fake.NewClientBuilder().WithObjects(node).Build()
+				return fields{
+					clientMap: newSlurmClientMap(controller.Name, sclient),
+				}
+			}(),
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        true,
+			wantReason:       nodeReasonPrefix + " Pod (default/foo-0) was cordoned",
+			wantUnresponsive: false,
+		},
+		{
+			name: "down and not responding is unresponsive",
+			fields: func() fields {
+				node := &types.V0044Node{
+					V0044Node: api.V0044Node{
+						Name: ptr.To(nodesetutils.GetNodeName(pod)),
+						State: ptr.To([]api.V0044NodeState{
+							api.V0044NodeStateDOWN,
+						}),
+						Reason: ptr.To("Not responding"),
+					},
+				}
+				sclient := fake.NewClientBuilder().WithObjects(node).Build()
+				return fields{
+					clientMap: newSlurmClientMap(controller.Name, sclient),
+				}
+			}(),
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        false,
+			wantReason:       "Not responding",
+			wantUnresponsive: true,
+		},
+		{
+			name: "no client returns conservative drain=true unresponsive=true",
+			fields: fields{
+				clientMap: clientmap.NewClientMap(),
+			},
+			args: args{
+				ctx:     ctx,
+				nodeset: nodeset,
+				pod:     pod,
+			},
+			wantDrain:        true,
+			wantReason:       "",
+			wantUnresponsive: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &realSlurmControl{
+				clientMap: tt.fields.clientMap,
+			}
+			gotDrain, gotReason, gotUnresponsive, err := r.GetNodeDrainInfo(tt.args.ctx, tt.args.nodeset, tt.args.pod)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if gotDrain != tt.wantDrain {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() drain = %v, want %v", gotDrain, tt.wantDrain)
+			}
+			if gotReason != tt.wantReason {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() reason = %v, want %v", gotReason, tt.wantReason)
+			}
+			if gotUnresponsive != tt.wantUnresponsive {
+				t.Errorf("realSlurmControl.GetNodeDrainInfo() unresponsive = %v, want %v", gotUnresponsive, tt.wantUnresponsive)
+			}
+		})
+	}
+}
+
 func Test_realSlurmControl_CalculateNodeStatus(t *testing.T) {
 	ctx := context.Background()
 	controller := &slinkyv1beta1.Controller{

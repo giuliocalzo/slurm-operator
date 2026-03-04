@@ -30,11 +30,51 @@ const (
 	AnnotationPodDeadline = NodeSetPrefix + "pod-deadline"
 )
 
+// Well Known Annotations for drain source tracking
+const (
+	// AnnotationPodCordonSource indicates the origin of the pod cordon.
+	// When set to "slurm", the cordon was initiated from an external Slurm drain
+	// and should not cause the operator to re-drain the Slurm node.
+	// When set to "operator", the cordon was initiated from the Kubernetes side
+	// (node cordon) and takes priority over Slurm drain state.
+	AnnotationPodCordonSource = NodeSetPrefix + "pod-cordon-source"
+
+	// AnnotationPodCordonReason stores a human-readable reason associated with
+	// the pod cordon. It is set for all cordon sources (Slurm drains, operator
+	// node cordons, scale-in) to support deduplication and reason propagation.
+	AnnotationPodCordonReason = NodeSetPrefix + "pod-cordon-reason"
+
+	// PodCordonSourceSlurm is the value of AnnotationPodCordonSource when the
+	// cordon originates from an external Slurm drain (not managed by the operator).
+	PodCordonSourceSlurm = "slurm"
+
+	// PodCordonSourceOperator is the value of AnnotationPodCordonSource when the
+	// cordon originates from a Kubernetes node cordon detected by the operator.
+	PodCordonSourceOperator = "operator"
+
+	// PodCordonSourceScaleIn is the value of AnnotationPodCordonSource when the
+	// cordon originates from scale-in. These pods are fully managed by
+	// processCondemned and should be skipped by syncCordon.
+	PodCordonSourceScaleIn = "scale-in"
+)
+
 // Well Known Annotations for Objects of type corev1.Node
 const (
-	// AnnotationNodeCordonReason indicates a custom reason for the Slurm DRAIN action taken when the Kube node on which
-	// a NodeSet pod is scheduled is cordoned
+	// AnnotationNodeCordonReason stores the drain reason on the Kubernetes node.
+	// In the K8s → Slurm direction it can be set by the user before cordoning to
+	// override the default Slurm drain reason.
+	// In the Slurm → K8s direction it is set by the operator to reflect the
+	// external Slurm drain reason.
 	AnnotationNodeCordonReason = NodeSetPrefix + "node-cordon-reason"
+
+	// AnnotationNodeCordonSource indicates who cordoned the Kubernetes node.
+	// When set to "slurm", the operator cordoned the node in response to an
+	// external Slurm drain.
+	AnnotationNodeCordonSource = NodeSetPrefix + "node-cordon-source"
+
+	// NodeCordonSourceSlurm is the value of AnnotationNodeCordonSource when the
+	// operator cordoned the Kubernetes node due to an external Slurm drain.
+	NodeCordonSourceSlurm = "slurm"
 
 	// AnnotationNodeTopologyLine indicates the Slurm dynamic topology line (e.g. "topo-switch:s2,topo-block:b2").
 	// Ref: https://slurm.schedmd.com/topology.html#dynamic_topo
