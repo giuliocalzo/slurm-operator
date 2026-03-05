@@ -23,6 +23,9 @@
 
 - JobAcctGatherType will default to `jobacct_gather/linux` when accounting is
   enabled but cgroups is disabled.
+- Add `--namespaces` flag to both the operator and webhook, allowing them to
+  watch only specific namespaces instead of all namespaces (the default).
+  Configurable via `operator.namespaces` and `webhook.namespaces` Helm values.
 
 ### Fixed
 
