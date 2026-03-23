@@ -75,7 +75,10 @@ function kind::start() {
 	local cluster_name="${1:-"kind"}"
 	local kind_config="${2:-"$ROOT_DIR/hack/kind-config.yaml"}"
 	if [ "$(kind get clusters | grep -oc kind)" -eq 0 ]; then
-		if [ "$(command -v systemd-run)" ]; then
+		# GitHub-hosted runners: avoid systemd-run --user scope issues in CI.
+		if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+			CMD=""
+		elif [ "$(command -v systemd-run)" ]; then
 			CMD="systemd-run --scope --user"
 		else
 			CMD=""
@@ -96,7 +99,8 @@ function helm::find() {
 }
 
 function kind::delete() {
-	kind delete cluster --name "$cluster_name"
+	local name="${1:-kind}"
+	kind delete cluster --name "$name"
 }
 
 function slurm-operator-crds::install() {

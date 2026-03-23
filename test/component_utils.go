@@ -131,6 +131,12 @@ func DoSlurmInstall(ctx context.Context, t *testing.T, config *envconf.Config, s
 	var err error
 
 	opts := []helm.Option{}
+	helmTimeout := "10m"
+	if slurmConfig.Login || slurmConfig.Pyxis {
+		// LoginSet pulls extra images (login + initconf); CI runners often need more than 10m for --wait.
+		helmTimeout = "25m"
+	}
+
 	opts = append(
 		opts,
 		helm.WithName("slurm"),
@@ -138,7 +144,7 @@ func DoSlurmInstall(ctx context.Context, t *testing.T, config *envconf.Config, s
 		helm.WithChart(Basepath+"helm/slurm"),
 		helm.WithArgs(setValuesFile),
 		helm.WithWait(),
-		helm.WithTimeout("10m"),
+		helm.WithTimeout(helmTimeout),
 	)
 
 	if slurmConfig.Accounting {

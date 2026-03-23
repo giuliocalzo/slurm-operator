@@ -1,0 +1,130 @@
+---
+name: ci
+
+"on":
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  CI_SUCCESS_LABEL: ci-success
+  CI_SUCCESS_LABEL_COLOR: "0E8A16"
+  CI_SUCCESS_LABEL_DESCRIPTION: "All CI jobs passed (pre-commit, go-test, kind e2e)"
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  REPOSITORY: ${{ github.repository }}
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Reset Labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "${PR_NUMBER}" --remove-label "${CI_SUCCESS_LABEL}" || true
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --verbose
+
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: make test
+
+  kind:
+    needs: [pre-commit, go-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: 'v4.1.1'
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Skaffold
+        run: |
+          ver="v2.18.0"
+          sudo curl -sSLo /usr/local/bin/skaffold "https://storage.googleapis.com/skaffold/releases/${ver}/skaffold-linux-amd64"
+          sudo chmod +x /usr/local/bin/skaffold
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/v4.49.2/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Create Kind cluster and deploy core stack
+        run: |
+          ./hack/kind.sh --core
+
+      - name: Run e2e tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: "60"
+          max_attempts: 3
+          command: make test-e2e
+
+      - name: Set CI success label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/${REPOSITORY}/labels/${CI_SUCCESS_LABEL}" --silent 2>/dev/null; then
+            gh label create "${CI_SUCCESS_LABEL}" --color "${CI_SUCCESS_LABEL_COLOR}" --description "${CI_SUCCESS_LABEL_DESCRIPTION}"
+          fi
+          gh issue edit "${PR_NUMBER}" --add-label "${CI_SUCCESS_LABEL}"

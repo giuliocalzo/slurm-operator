@@ -149,25 +149,36 @@ func checkRestAPIHealth(crClient crclient.Client, ctx context.Context, t *testin
 	}
 }
 
+// checkNodeSetReplicas waits until NodeSet Status.AvailableReplicas matches Spec.Replicas.
+// Scale-up pulls a new worker image per pod; Pyxis slurmd images and cold Kind nodes on CI
+// routinely exceed the previous ~80s cap (16×5s).
 func checkNodeSetReplicas(crClient crclient.Client, ctx context.Context, t *testing.T, config *envconf.Config, nodesetKey crclient.ObjectKey) {
+	const maxWait = 15 * time.Minute
+	const interval = 10 * time.Second
+
+	deadline := time.Now().Add(maxWait)
 	nodeset := &slinkyv1beta1.NodeSet{}
 
-	for retry := range 16 {
-
+	for {
 		err := crClient.Get(ctx, nodesetKey, nodeset)
 		if err != nil {
 			t.Fatal("failed to Get() NodeSet using controller-runtime client")
 		}
 
-		if *nodeset.Spec.Replicas == nodeset.Status.AvailableReplicas {
-			break
+		if nodeset.Spec.Replicas != nil && *nodeset.Spec.Replicas == nodeset.Status.AvailableReplicas {
+			return
 		}
 
-		if retry == 15 {
-			t.Fatalf("Timed out waiting for NodeSet replicas to become ready. \nDesired replicas: %d \nReady replicas: %d", *nodeset.Spec.Replicas, nodeset.Status.AvailableReplicas)
+		if time.Now().After(deadline) {
+			var want int32
+			if nodeset.Spec.Replicas != nil {
+				want = *nodeset.Spec.Replicas
+			}
+			t.Fatalf("Timed out after %v waiting for NodeSet replicas to become ready.\nDesired replicas: %d\nReady replicas: %d",
+				maxWait, want, nodeset.Status.AvailableReplicas)
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(interval)
 	}
 }
 
@@ -226,26 +237,38 @@ func checkLoginSetHealth(crClient crclient.Client, ctx context.Context, t *testi
 
 	loginSetUID := loginSet.UID
 
-	// Get loginSet Deployment using loginSet CR
+	var wantReplicas int32 = 1
+	if loginSet.Spec.Replicas != nil {
+		wantReplicas = *loginSet.Spec.Replicas
+	}
+
+	// Wait for the operator-created Deployment (Helm --wait does not wait for operator-managed children).
+	// On slow CI (e.g. Kind on GitHub Actions), the Deployment may appear well after the LoginSet CR exists.
 	deploymentKey := loginSet.Key()
+	deploymentStub := &appsv1.Deployment{}
+	deploymentStub.SetName(deploymentKey.Name)
+	deploymentStub.SetNamespace(deploymentKey.Namespace)
+
+	err = wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deploymentStub, func(object k8s.Object) int32 {
+		return object.(*appsv1.Deployment).Status.ReadyReplicas
+	}, wantReplicas),
+		wait.WithTimeout(20*time.Minute),
+		wait.WithInterval(10*time.Second),
+		wait.WithImmediate(),
+	)
+	if err != nil {
+		t.Fatalf("timed out waiting for Deployment %s/%s to reach %d ready replicas: %v", deploymentKey.Namespace, deploymentKey.Name, wantReplicas, err)
+	}
+
 	deployment := &appsv1.Deployment{}
 	err = crClient.Get(ctx, deploymentKey, deployment)
 	if err != nil {
-		t.Fatal("failed to Get() deployment using controller-runtime client")
+		t.Fatalf("failed to Get() deployment after ready wait: %v", err)
 	}
-
 	// Confirm ownership of loginSet deployment
 	for _, owner := range deployment.OwnerReferences {
 		if owner.UID != loginSetUID {
 			t.Fatalf("dubious ownership of deployment: %v", deployment)
 		}
-	}
-
-	// Check whether loginSet deployment is healthy
-	err = wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-		return object.(*appsv1.Deployment).Status.ReadyReplicas
-	}, *deployment.Spec.Replicas))
-	if err != nil {
-		t.Fatalf("timed out waiting for Deployment %v to reach a ready state", deployment.Name)
 	}
 }
