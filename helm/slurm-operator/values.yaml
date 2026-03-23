@@ -94,7 +94,6 @@ operator:
   # If empty, all namespaces are watched.
   namespaces: ""
 
-
 # Webhook configurations.
 webhook:
   # -- Enable the webhook.
@@ -154,7 +153,6 @@ webhook:
   # If empty, all namespaces are watched.
   namespaces: ""
 
-#
 # Cert-Manager certificate configurations.
 certManager:
   # -- Enable cert-manager for certificate management.
@@ -162,6 +160,6 @@ certManager:
   # -- The secret to be (created and) mounted.
   secretName: slurm-operator-webhook-ca
   # -- Duration of certificate life.
-  duration: 43800h0m0s # 5 year
+  duration: 43800h0m0s  # 5 year
   # -- Certificate renewal time. Should be before the expiration.
-  renewBefore: 8760h0m0s # 1 year
+  renewBefore: 8760h0m0s  # 1 year
