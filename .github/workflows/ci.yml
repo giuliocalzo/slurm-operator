@@ -36,6 +36,9 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -67,6 +70,9 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Run tests
         run: make test
@@ -81,6 +87,9 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - uses: azure/setup-helm@v4
         with:
