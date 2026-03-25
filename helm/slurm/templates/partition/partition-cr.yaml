@@ -1,0 +1,34 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- range $partName, $part := $.Values.partitionCRDs }}
+{{- if $part.enabled }}
+---
+apiVersion: slinky.slurm.net/v1beta1
+kind: Partition
+metadata:
+  name: {{ printf "%s-%s" (include "slurm.fullname" $) $partName }}
+  namespace: {{ include "slurm.namespace" $ }}
+  labels:
+    {{- include "slurm.labels" $ | nindent 4 }}
+spec:
+  controllerRef:
+    name: {{ include "slurm.fullname" $ }}
+    namespace: {{ include "slurm.namespace" $ }}
+  nodes: {{ $part.nodes }}
+  {{- if $part.default }}
+  default: {{ $part.default }}
+  {{- end }}
+  {{- with $part.maxTime }}
+  maxTime: {{ . }}
+  {{- end }}
+  {{- with $part.state }}
+  state: {{ . }}
+  {{- end }}
+  {{- with $part.config }}
+  config: {{ . }}
+  {{- end }}
+{{- end }}{{- /* if $part.enabled */}}
+{{- end }}{{- /* range $partName, $part := $.Values.partitionCRDs */}}

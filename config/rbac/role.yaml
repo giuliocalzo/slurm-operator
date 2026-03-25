@@ -142,3 +142,11 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - slinky.slurm.net
+  resources:
+  - partitions
+  verbs:
+  - get
+  - list
+  - watch
