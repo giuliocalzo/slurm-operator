@@ -105,6 +105,7 @@ rules:
   - controllers
   - loginsets
   - nodesets
+  - partitions
   - restapis
   - tokens
   verbs:
@@ -122,6 +123,7 @@ rules:
   - controllers/finalizers
   - loginsets/finalizers
   - nodesets/finalizers
+  - partitions/finalizers
   - restapis/finalizers
   - tokens/finalizers
   verbs:
@@ -133,6 +135,7 @@ rules:
   - controllers/status
   - loginsets/status
   - nodesets/status
+  - partitions/status
   - restapis/status
   - tokens/status
   verbs:

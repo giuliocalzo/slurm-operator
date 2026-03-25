@@ -47,6 +47,11 @@ func (b *ControllerBuilder) BuildControllerConfig(controller *slinkyv1beta1.Cont
 		return nil, err
 	}
 
+	partitionList, err := b.refResolver.GetPartitionsForController(ctx, controller)
+	if err != nil {
+		return nil, err
+	}
+
 	configFilesList := &corev1.ConfigMapList{
 		Items: make([]corev1.ConfigMap, 0, len(controller.Spec.ConfigFileRefs)),
 	}
@@ -142,7 +147,7 @@ func (b *ControllerBuilder) BuildControllerConfig(controller *slinkyv1beta1.Cont
 		},
 		Data: map[string]string{
 			SlurmConfFile: buildSlurmConf(
-				controller, accounting, nodesetList,
+				controller, accounting, nodesetList, partitionList,
 				prologScripts, epilogScripts,
 				prologSlurmctldScripts, epilogSlurmctldScripts,
 				cgroupEnabled),
@@ -163,6 +168,7 @@ func buildSlurmConf(
 	controller *slinkyv1beta1.Controller,
 	accounting *slinkyv1beta1.Accounting,
 	nodesetList *slinkyv1beta1.NodeSetList,
+	partitionList *slinkyv1beta1.PartitionList,
 	prologScripts, epilogScripts []string,
 	prologSlurmctldScripts, epilogSlurmctldScripts []string,
 	cgroupEnabled bool,
@@ -269,6 +275,12 @@ func buildSlurmConf(
 		conf.AddProperty(config.NewPropertyRaw(snippet))
 	}
 
+	if snippet := buildPartitionConf(partitionList); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### PARTITION CRD ###"))
+		conf.AddProperty(config.NewPropertyRaw(snippet))
+	}
+
 	extraConf := controller.Spec.ExtraConf
 	if extraConf != "" {
 		conf.AddProperty(config.NewPropertyRaw("#"))
@@ -360,6 +372,42 @@ func buildNodeSetConf(nodesetList *slinkyv1beta1.NodeSetList) string {
 		}
 		partitionLineRendered := strings.Join(partitionLine, " ")
 		conf.AddProperty(config.NewPropertyRaw(partitionLineRendered))
+	}
+
+	return conf.WithFinalNewline(false).Build()
+}
+
+// buildPartitionConf returns a slurm.conf snippet containing Partition CRD configurations.
+//
+// https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
+func buildPartitionConf(partitionList *slinkyv1beta1.PartitionList) string {
+	if partitionList == nil || len(partitionList.Items) == 0 {
+		return ""
+	}
+
+	conf := config.NewBuilder()
+
+	sort.Slice(partitionList.Items, func(i, j int) bool {
+		return partitionList.Items[i].Name < partitionList.Items[j].Name
+	})
+	for _, partition := range partitionList.Items {
+		parts := []string{
+			fmt.Sprintf("PartitionName=%v", partition.Name),
+			fmt.Sprintf("Nodes=%v", partition.Spec.Nodes),
+		}
+		if partition.Spec.Default {
+			parts = append(parts, "Default=YES")
+		}
+		if partition.Spec.MaxTime != "" {
+			parts = append(parts, fmt.Sprintf("MaxTime=%v", partition.Spec.MaxTime))
+		}
+		if partition.Spec.State != "" {
+			parts = append(parts, fmt.Sprintf("State=%v", partition.Spec.State))
+		}
+		if partition.Spec.Config != "" {
+			parts = append(parts, partition.Spec.Config)
+		}
+		conf.AddProperty(config.NewPropertyRaw(strings.Join(parts, " ")))
 	}
 
 	return conf.WithFinalNewline(false).Build()
