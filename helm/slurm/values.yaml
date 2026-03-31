@@ -784,7 +784,7 @@ nodesets:
         #     server: nfs-server.example.com
         #     path: /exports/home
 
-# -- (map[string]object) Slurm partition configurations.
+# -- (map[string]object) Slurm partition configurations injected into the Controller extraConf.
 # The map key represents the partition name (must be unique); the map value represents the partition definition.
 partitions:
   # Example partition containing all NodeSets.
@@ -805,6 +805,31 @@ partitions:
       State: UP
       Default: "YES"
       MaxTime: UNLIMITED
+
+# -- (map[string]object) Slurm partition configurations rendered as Partition CRDs.
+# These are observed by the operator and trigger dynamic reconfiguration via `scontrol reconfigure`.
+# The map key represents the partition name (must be unique); the map value represents the Partition CR spec.
+# Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
+partitionCRDs: {}
+  # Example:
+  # gpu:
+  #   # -- Enable this partition to be rendered as a Partition CR.
+  #   enabled: true
+  #   # -- The Nodes= value for this partition (NodeSet names, hostlists, or "ALL").
+  #   # Ref: https://slurm.schedmd.com/slurm.conf.html#OPT_Nodes_1
+  #   nodes: gpu-workers
+  #   # -- Whether this is the default partition.
+  #   # Ref: https://slurm.schedmd.com/slurm.conf.html#OPT_Default
+  #   default: false
+  #   # -- Maximum time limit for jobs in this partition (e.g. "UNLIMITED", "1-00:00:00").
+  #   # Ref: https://slurm.schedmd.com/slurm.conf.html#OPT_MaxTime_1
+  #   maxTime: UNLIMITED
+  #   # -- Partition state (UP, DOWN, DRAIN, or INACTIVE).
+  #   # Ref: https://slurm.schedmd.com/slurm.conf.html#OPT_State
+  #   state: UP
+  #   # -- (string) Raw extra Slurm partition parameters appended to the partition line.
+  #   # Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
+  #   config: null
 
 # Vendor specific integration and configurations.
 vendor:

@@ -91,6 +91,22 @@ func (r *RefResolver) GetRestapisForController(ctx context.Context, controller *
 	return out, nil
 }
 
+func (r *RefResolver) GetPartitionsForController(ctx context.Context, controller *slinkyv1beta1.Controller) (*slinkyv1beta1.PartitionList, error) {
+	list := &slinkyv1beta1.PartitionList{}
+	if err := r.reader.List(ctx, list); err != nil {
+		return nil, err
+	}
+
+	out := &slinkyv1beta1.PartitionList{}
+	for _, item := range list.Items {
+		if item.Spec.ControllerRef.IsMatch(objectutils.NamespacedName(controller)) {
+			out.Items = append(out.Items, item)
+		}
+	}
+
+	return out, nil
+}
+
 func (r *RefResolver) GetControllersForAccounting(ctx context.Context, accounting *slinkyv1beta1.Accounting) (*slinkyv1beta1.ControllerList, error) {
 	list := &slinkyv1beta1.ControllerList{}
 	if err := r.reader.List(ctx, list); err != nil {
