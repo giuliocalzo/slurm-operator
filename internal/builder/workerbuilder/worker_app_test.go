@@ -74,7 +74,10 @@ func TestBuilder_BuildWorkerPodTemplate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := New(tt.fields.client)
-			got := b.BuildWorkerPodTemplate(tt.args.nodeset, tt.args.controller)
+			got, err := b.BuildWorkerPodTemplate(tt.args.nodeset, tt.args.controller)
+			if err != nil {
+				t.Fatalf("BuildWorkerPodTemplate() error = %v", err)
+			}
 			selector, err := k8slabels.ConvertSelectorToLabelsMap(tt.args.nodeset.Status.Selector)
 			if err != nil {
 				t.Errorf("ConvertSelectorToLabelsMap() = %v", err)
@@ -306,5 +309,64 @@ func TestWorkerBuilder_getResourceLimits(t *testing.T) {
 				t.Errorf("getResourceLimits() = %v, want %v", memory, tt.want.memory)
 			}
 		})
+	}
+}
+
+func TestValidateNodeSetExtraConf(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "empty", input: "", wantErr: false},
+		{name: "valid single", input: "Weight=10", wantErr: false},
+		{name: "valid multiple", input: "features=bar weight=5", wantErr: false},
+		{name: "double space", input: "a=b  c=d", wantErr: false},
+		{name: "value with equals", input: "Foo=bar=baz", wantErr: false},
+		{name: "missing equals", input: "notakeyvalue", wantErr: true},
+		{name: "empty key", input: "=val", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNodeSetExtraConf(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ValidateNodeSetExtraConf() err = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateNodeSetExtraConf() = %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildWorkerPodTemplate_extraConf_invalid(t *testing.T) {
+	b := New(fake.NewFakeClient())
+	ns := &slinkyv1beta1.NodeSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "slurm-foo"},
+		Spec: slinkyv1beta1.NodeSetSpec{
+			ControllerRef: slinkyv1beta1.ObjectReference{Name: "slurm"},
+			ExtraConf:     "not-a-pair",
+			Template: slinkyv1beta1.PodTemplate{
+				PodSpecWrapper: slinkyv1beta1.PodSpecWrapper{
+					PodSpec: corev1.PodSpec{Hostname: "foo-"},
+				},
+			},
+		},
+		Status: slinkyv1beta1.NodeSetStatus{
+			Selector: k8slabels.SelectorFromSet(k8slabels.Set(
+				labels.NewBuilder().WithWorkerSelectorLabels(&slinkyv1beta1.NodeSet{ObjectMeta: metav1.ObjectMeta{Name: "slurm"}}).Build(),
+			)).String(),
+		},
+	}
+	ctld := &slinkyv1beta1.Controller{ObjectMeta: metav1.ObjectMeta{Name: "slurm"}}
+	_, err := b.BuildWorkerPodTemplate(ns, ctld)
+	if err == nil {
+		t.Fatal("BuildWorkerPodTemplate: want error for invalid ExtraConf")
+	}
+	if !strings.Contains(err.Error(), "malformed extraConf") {
+		t.Fatalf("error = %v, want malformed extraConf", err)
 	}
 }

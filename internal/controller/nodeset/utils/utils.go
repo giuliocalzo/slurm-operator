@@ -33,9 +33,12 @@ func NewNodeSetStatefulSetPod(
 	controller *slinkyv1beta1.Controller,
 	ordinal int,
 	revisionHash string,
-) *corev1.Pod {
+) (*corev1.Pod, error) {
 	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
-	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	podTemplate, err := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	if err != nil {
+		return nil, err
+	}
 	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
 	pod.Name = GetOrdinalPodName(nodeset, ordinal)
 	initIdentity(nodeset, pod)
@@ -53,6 +56,22 @@ func NewNodeSetStatefulSetPod(
 	// be avoided and priorityClass will not be honored.
 	pod.Spec.NodeName = ""
 
+	return pod, nil
+}
+
+// MustNewNodeSetStatefulSetPod is for tests or other call sites where NodeSet ExtraConf is known valid.
+// It panics if the worker pod template cannot be built.
+func MustNewNodeSetStatefulSetPod(
+	client client.Client,
+	nodeset *slinkyv1beta1.NodeSet,
+	controller *slinkyv1beta1.Controller,
+	ordinal int,
+	revisionHash string,
+) *corev1.Pod {
+	pod, err := NewNodeSetStatefulSetPod(client, nodeset, controller, ordinal, revisionHash)
+	if err != nil {
+		panic(err)
+	}
 	return pod
 }
 
@@ -62,9 +81,12 @@ func NewNodeSetDaemonSetPod(
 	controller *slinkyv1beta1.Controller,
 	nodeName string,
 	revisionHash string,
-) *corev1.Pod {
+) (*corev1.Pod, error) {
 	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
-	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	podTemplate, err := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	if err != nil {
+		return nil, err
+	}
 	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
 
 	// Ensure the hostname is RFC 1178 compliant
@@ -93,6 +115,22 @@ func NewNodeSetDaemonSetPod(
 	pod.Name = ""
 	pod.Spec.Affinity = daemonutils.ReplaceDaemonSetPodNodeNameNodeAffinity(pod.Spec.Affinity, nodeName)
 
+	return pod, nil
+}
+
+// MustNewNodeSetDaemonSetPod is for tests or other call sites where NodeSet ExtraConf is known valid.
+// It panics if the worker pod template cannot be built.
+func MustNewNodeSetDaemonSetPod(
+	client client.Client,
+	nodeset *slinkyv1beta1.NodeSet,
+	controller *slinkyv1beta1.Controller,
+	nodeName string,
+	revisionHash string,
+) *corev1.Pod {
+	pod, err := NewNodeSetDaemonSetPod(client, nodeset, controller, nodeName, revisionHash)
+	if err != nil {
+		panic(err)
+	}
 	return pod
 }
 

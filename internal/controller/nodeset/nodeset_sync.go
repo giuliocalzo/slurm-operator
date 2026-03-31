@@ -1055,7 +1055,10 @@ func (r *NodeSetReconciler) newNodeSetPodDaemon(
 		return nil, fmt.Errorf("nodeName must not be empty")
 	}
 
-	pod := nodesetutils.NewNodeSetDaemonSetPod(client, nodeset, controller, nodeName, revisionHash)
+	pod, err := nodesetutils.NewNodeSetDaemonSetPod(client, nodeset, controller, nodeName, revisionHash)
+	if err != nil {
+		return nil, fmt.Errorf("worker pod template: %w", err)
+	}
 	return pod, nil
 }
 
@@ -1074,7 +1077,10 @@ func (r *NodeSetReconciler) newNodeSetPodOrdinal(
 		return nil, err
 	}
 
-	pod := nodesetutils.NewNodeSetStatefulSetPod(client, nodeset, controller, ordinal, revisionHash)
+	pod, err := nodesetutils.NewNodeSetStatefulSetPod(client, nodeset, controller, ordinal, revisionHash)
+	if err != nil {
+		return nil, fmt.Errorf("worker pod template: %w", err)
+	}
 
 	return pod, nil
 }

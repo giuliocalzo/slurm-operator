@@ -235,7 +235,7 @@ func Test_NodeEventHandler_Update(t *testing.T) {
 
 func newNodeSetPod(client client.Client, nodeset *slinkyv1beta1.NodeSet, ordinal int, nodeName string) *corev1.Pod {
 	ctld := &slinkyv1beta1.Controller{}
-	pod := nodesetutils.NewNodeSetStatefulSetPod(client, nodeset, ctld, ordinal, "")
+	pod := nodesetutils.MustNewNodeSetStatefulSetPod(client, nodeset, ctld, ordinal, "")
 	pod.Spec.NodeName = nodeName
 	return pod
 }

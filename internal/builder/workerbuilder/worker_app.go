@@ -29,13 +29,18 @@ import (
 	slurmtaints "github.com/SlinkyProject/slurm-operator/pkg/taints"
 )
 
-func (b *WorkerBuilder) BuildWorkerPodTemplate(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) corev1.PodTemplateSpec {
+func (b *WorkerBuilder) BuildWorkerPodTemplate(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) (corev1.PodTemplateSpec, error) {
 	ctx := context.TODO()
 	key := nodeset.Key()
 
 	hashMap, err := b.getWorkerHashes(ctx, nodeset)
 	if err != nil {
-		return corev1.PodTemplateSpec{}
+		return corev1.PodTemplateSpec{}, err
+	}
+
+	slurmd, err := b.slurmdContainer(nodeset, controller)
+	if err != nil {
+		return corev1.PodTemplateSpec{}, err
 	}
 
 	objectMeta := metadata.NewBuilder(key).
@@ -62,7 +67,7 @@ func (b *WorkerBuilder) BuildWorkerPodTemplate(nodeset *slinkyv1beta1.NodeSet, c
 			AutomountServiceAccountToken: ptr.To(false),
 			EnableServiceLinks:           ptr.To(false),
 			Containers: []corev1.Container{
-				b.slurmdContainer(nodeset, controller),
+				slurmd,
 			},
 			Subdomain: common.SlurmClusterWorkerServiceName(spec.ControllerRef.Name),
 			DNSConfig: &corev1.PodDNSConfig{
@@ -81,7 +86,7 @@ func (b *WorkerBuilder) BuildWorkerPodTemplate(nodeset *slinkyv1beta1.NodeSet, c
 		Merge: template.PodSpec,
 	}
 
-	return b.CommonBuilder.BuildPodTemplate(opts)
+	return b.CommonBuilder.BuildPodTemplate(opts), nil
 }
 
 func nodesetVolumes(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) []corev1.Volume {
@@ -158,7 +163,7 @@ func nodesetVolumes(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Co
 	return out
 }
 
-func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) corev1.Container {
+func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) (corev1.Container, error) {
 	merge := nodeset.Spec.Slurmd.Container
 
 	// Base ports always include slurmd
@@ -195,10 +200,15 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 
 	cpus, memory := b.getResourceLimits(&nodeset.Spec)
 
+	args, err := slurmdArgs(nodeset, controller)
+	if err != nil {
+		return corev1.Container{}, err
+	}
+
 	opts := common.ContainerOpts{
 		Base: corev1.Container{
 			Name: labels.WorkerApp,
-			Args: slurmdArgs(nodeset, controller),
+			Args: args,
 			Env: []corev1.EnvVar{
 				{
 					Name: "POD_TOPOLOGY",
@@ -273,21 +283,54 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 		Merge: merge,
 	}
 
-	return b.CommonBuilder.BuildContainer(opts)
+	return b.CommonBuilder.BuildContainer(opts), nil
 }
 
-func slurmdArgs(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) []string {
+func slurmdArgs(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) ([]string, error) {
+	confArgs, err := slurmdConfArgs(nodeset)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{"-Z"}
 	args = append(args, common.ConfiglessArgs(controller)...)
-	args = append(args, slurmdConfArgs(nodeset)...)
-	return args
+	args = append(args, confArgs...)
+	return args, nil
 }
 
-func slurmdConfArgs(nodeset *slinkyv1beta1.NodeSet) []string {
-	extraConf := []string{}
-	if nodeset.Spec.ExtraConf != "" {
-		extraConf = strings.Split(nodeset.Spec.ExtraConf, " ")
+// extraConfTokens returns non-empty tokens from a space-separated extraConf string
+// (consecutive spaces or leading/trailing spaces do not produce empty tokens here).
+func extraConfTokens(extraConf string) []string {
+	if extraConf == "" {
+		return nil
 	}
+	raw := strings.Split(extraConf, " ")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// ValidateNodeSetExtraConf checks that extraConf is a space-separated list of KEY=VALUE
+// tokens as consumed for slurmd --conf (see slurmdConfArgs).
+func ValidateNodeSetExtraConf(extraConf string) error {
+	for _, item := range extraConfTokens(extraConf) {
+		pair := strings.SplitN(item, "=", 2)
+		if len(pair) != 2 || pair[0] == "" {
+			return fmt.Errorf("malformed extraConf item %q: each non-empty token must be KEY=VALUE", item)
+		}
+	}
+	return nil
+}
+
+func slurmdConfArgs(nodeset *slinkyv1beta1.NodeSet) ([]string, error) {
+	if err := ValidateNodeSetExtraConf(nodeset.Spec.ExtraConf); err != nil {
+		return nil, err
+	}
+
+	extraConf := extraConfTokens(nodeset.Spec.ExtraConf)
 
 	name := nodeset.Name
 	template := nodeset.Spec.Template.PodSpecWrapper
@@ -301,9 +344,6 @@ func slurmdConfArgs(nodeset *slinkyv1beta1.NodeSet) []string {
 	for _, item := range extraConf {
 		pair := strings.SplitN(item, "=", 2)
 		key := cases.Title(language.English).String(pair[0])
-		if len(pair) != 2 {
-			panic(fmt.Sprintf("malformed --conf item: %v", item))
-		}
 		val := pair[1]
 		if key == "Features" || key == "Feature" {
 			// Slurm treats trailing 's' as optional. We have to
@@ -329,7 +369,7 @@ func slurmdConfArgs(nodeset *slinkyv1beta1.NodeSet) []string {
 		fmt.Sprintf("'%s'", strings.Join(confList, " ")),
 	}
 
-	return args
+	return args, nil
 }
 
 func (b *WorkerBuilder) getWorkerHashes(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) (map[string]string, error) {

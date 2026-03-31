@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	"github.com/SlinkyProject/slurm-operator/internal/builder/workerbuilder"
 )
 
 // TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -36,6 +37,9 @@ var _ admission.Validator[*slinkyv1beta1.NodeSet] = &NodeSetWebhook{}
 func (r *NodeSetWebhook) ValidateCreate(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) (admission.Warnings, error) {
 	nodesetlog.Info("validate create", "nodeset", klog.KObj(nodeset))
 
+	if err := workerbuilder.ValidateNodeSetExtraConf(nodeset.Spec.ExtraConf); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 
@@ -43,6 +47,9 @@ func (r *NodeSetWebhook) ValidateCreate(ctx context.Context, nodeset *slinkyv1be
 func (r *NodeSetWebhook) ValidateUpdate(ctx context.Context, oldNodeSet, newNodeSet *slinkyv1beta1.NodeSet) (admission.Warnings, error) {
 	nodesetlog.Info("validate update", "newNodeSet", klog.KObj(newNodeSet))
 
+	if err := workerbuilder.ValidateNodeSetExtraConf(newNodeSet.Spec.ExtraConf); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 
