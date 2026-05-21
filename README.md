@@ -188,10 +188,10 @@ helm install \
   --set crds.enabled=true
 ```
 
-Install the slurm-operator and its CRDs:
+Install the slurm-operator (CRDs are installed by default from
+`templates/crds/`):
 
 ```sh
-helm install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds
 helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
   --namespace=slinky --create-namespace
 ```
@@ -223,16 +223,14 @@ still work, but it is recommended to use the new CRD version as indicated by the
 installed Slinky CRDs.
 
 To upgrade between Slinky `v1.Y` versions (e.g. `v1.0.Z` => `v1.1.Z`), upgrade
-the slurm-operator-crds chart followed by the slurm-operator chart, or both at
-the same time by upgrading the slurm-operator chart when using
-`crds.enabled=true`.
+the slurm-operator chart (CRD updates are applied by default):
 
 ```bash
-helm upgrade slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds \
-  --version $SLINKY_VERSION
 helm upgrade slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
   --namespace slinky --version $SLINKY_VERSION
 ```
+
+If you manage CRDs outside Helm, set `crds.install=false` on install and upgrade.
 
 All Slurm charts may remain on the old Slinky release series (e.g. `v1.0.x`)
 despite the slurm-operator and its CRDs being on a newer Slinky release series
@@ -257,14 +255,15 @@ Slinky charts and delete Slinky CRDs, then install the new release like normal.
 ```bash
 helm --namespace=slurm uninstall slurm
 helm --namespace=slinky uninstall slurm-operator
-helm uninstall slurm-operator-crds
 ```
 
-If the CRDs were not installed via `slurm-operator-crds` helm chart:
+If the CRDs were not removed by Helm (the default `crds.keep=true` retains
+them on uninstall) or were not installed via the slurm-operator chart:
 
 ```bash
 kubectl delete customresourcedefinitions.apiextensions.k8s.io accountings.slinky.slurm.net
 kubectl delete customresourcedefinitions.apiextensions.k8s.io clusters.slinky.slurm.net # defunct
+kubectl delete customresourcedefinitions.apiextensions.k8s.io controllers.slinky.slurm.net
 kubectl delete customresourcedefinitions.apiextensions.k8s.io loginsets.slinky.slurm.net
 kubectl delete customresourcedefinitions.apiextensions.k8s.io nodesets.slinky.slurm.net
 kubectl delete customresourcedefinitions.apiextensions.k8s.io restapis.slinky.slurm.net

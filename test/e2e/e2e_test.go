@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/SlinkyProject/slurm-operator/test"
-	"helm.sh/helm/v3/pkg/action"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
@@ -30,17 +29,6 @@ func TestMain(m *testing.M) {
 	err := test.BuildOperatorImages(operatorName, webhookName)
 	if err != nil {
 		fmt.Printf("Failed to build images for Slurm-operator: %v", err)
-		os.Exit(1)
-	}
-
-	// Build the slurm-operator-crds Helm chart
-	slurmOperatorCRDs := action.Package{
-		DependencyUpdate: true,
-		Destination:      test.Basepath + "helm/slurm-operator/charts",
-	}
-	_, err = slurmOperatorCRDs.Run(test.Basepath+"helm/slurm-operator-crds", nil)
-	if err != nil {
-		fmt.Printf("Failed to build Helm chart for Slurm-operator: %v", err)
 		os.Exit(1)
 	}
 
@@ -82,7 +70,6 @@ func TestInstallation(t *testing.T) {
 			name: "Install slurm-operator",
 			dependencies: []types.Feature{
 				installCertMgr(),
-				installSlurmOperatorCRDS(),
 				installSlurmOperator(),
 			},
 		},
@@ -142,7 +129,6 @@ func TestInstallation(t *testing.T) {
 			name: "Uninstall slurm-operator",
 			dependencies: []types.Feature{
 				uninstallSlurmOperator(),
-				uninstallSlurmOperatorCRDs(),
 			},
 		},
 	}

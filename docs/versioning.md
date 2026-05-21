@@ -11,6 +11,7 @@
     - [Major](#major)
   - [CRD Versions](#crd-versions)
   - [Helm Chart Versions](#helm-chart-versions)
+    - [slurm-operator CRDs](#slurm-operator-crds)
 
 <!-- mdformat-toc end -->
 
@@ -79,6 +80,19 @@ Helm charts share their version with the Slinky release version.
 Slinky `v1.Y` releases may introduce structural changes to the `values.yaml`
 such that upgrading Slinky release series (e.g. `v1.0.Z` => `v1.1.Z`) of a chart
 may need extra attention.
+
+### slurm-operator CRDs
+
+Slinky [CRDs] are packaged as Helm templates in the [slurm-operator] chart under
+`helm/slurm-operator/templates/crds/`. They are installed and upgraded with the
+chart when `crds.install` is `true` (the default).
+
+- `crds.keep` (default `true`) adds `helm.sh/resource-policy: keep` so CRDs
+  typically remain after `helm uninstall`.
+- Set `crds.install=false` if CRDs are managed outside this release.
+
+The former standalone `slurm-operator-crds` chart has been removed; use the
+slurm-operator chart for CRD lifecycle instead.
 
 <!-- Links -->
 

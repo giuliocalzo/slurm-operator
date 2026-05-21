@@ -99,13 +99,6 @@ function kind::delete() {
 	kind delete cluster --name "$cluster_name"
 }
 
-function slurm-operator-crds::install() {
-	(
-		cd "$ROOT_DIR"/helm/slurm-operator-crds
-		skaffold run
-	)
-}
-
 function slurm-operator::prerequisites() {
 	local chartName
 
@@ -184,7 +177,7 @@ $(basename "$0") - Manage a kind cluster for local testing/development
 	usage: $(basename "$0") [--config=KIND_CONFIG_PATH]
 	        [--recreate|--delete]
 	        [--core][--extras][--all]
-	        [--crds][--operator][--slurm]
+	        [--operator][--slurm]
 	        [-h|--help] [KIND_CLUSTER_NAME]
 
 KIND OPTIONS:
@@ -195,9 +188,8 @@ KIND OPTIONS:
 HELM OPTIONS:
 	--all               Equivalent of: --core --extras
 	--extras            Install extra charts (e.g. prometheus, keda, etc..).
-	--core              Equivalent of: --crds --operator --slurm
-	--crds              Install the operator CRDs chart.
-	--operator          Install the operator chart.
+	--core              Equivalent of: --operator --slurm
+	--operator          Install the slurm-operator chart (includes CRDs).
 	--slurm             Install the slurm chart.
 
 HELP OPTIONS:
@@ -211,13 +203,12 @@ OPT_DEBUG=false
 OPT_RECREATE=false
 OPT_CONFIG="$ROOT_DIR/hack/kind.yaml"
 OPT_DELETE=false
-OPT_OPERATOR_CRDS=false
 OPT_OPERATOR=false
 OPT_SLURM=false
 OPT_EXTRAS=false
 
 SHORT="+h"
-LONG="debug,config:,recreate,delete,crds,operator,slurm,all,extras,core,help"
+LONG="debug,config:,recreate,delete,operator,slurm,all,extras,core,help"
 OPTS="$(getopt -a --options "$SHORT" --longoptions "$LONG" -- "$@")"
 eval set -- "${OPTS}"
 while :; do
@@ -238,10 +229,6 @@ while :; do
 		OPT_DELETE=true
 		shift
 		;;
-	--crds)
-		OPT_OPERATOR_CRDS=true
-		shift
-		;;
 	--operator)
 		OPT_OPERATOR=true
 		shift
@@ -251,7 +238,6 @@ while :; do
 		shift
 		;;
 	--all)
-		OPT_OPERATOR_CRDS=true
 		OPT_OPERATOR=true
 		OPT_SLURM=true
 		OPT_EXTRAS=true
@@ -262,7 +248,6 @@ while :; do
 		shift
 		;;
 	--core)
-		OPT_OPERATOR_CRDS=true
 		OPT_OPERATOR=true
 		OPT_SLURM=true
 		shift
@@ -301,9 +286,6 @@ function main() {
 		extras::install
 	fi
 
-	if $OPT_OPERATOR_CRDS; then
-		slurm-operator-crds::install
-	fi
 	if $OPT_OPERATOR; then
 		slurm-operator::install
 	fi

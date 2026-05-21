@@ -23,8 +23,14 @@ priorityClassName: ""
 
 # -- Configure Custom Resource Definitions (CRDs).
 crds:
-  # -- Whether this helm chart should manage the CRD and its upgrades.
-  enabled: false
+  # -- Install and upgrade CRDs.
+  install: true
+  # -- Keep CRDs on chart uninstall.
+  keep: true
+  # -- Annotations to be added to all CRDs.
+  annotations: {}
+  # -- Additional labels to be added to all CRDs.
+  additionalLabels: {}
 
 # Operator configurations.
 operator:

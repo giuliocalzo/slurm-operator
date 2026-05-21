@@ -8,8 +8,10 @@
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [Slurm Operator And CRDs](#slurm-operator-and-crds)
+    - [CRD Configuration](#crd-configuration)
+    - [Installing CRDs Separately](#installing-crds-separately)
+    - [Migrating From slurm-operator-crds](#migrating-from-slurm-operator-crds)
     - [Namespace-Scoped Watching](#namespace-scoped-watching)
-    - [With CRDs As Subchart](#with-crds-as-subchart)
     - [Without cert-manager](#without-cert-manager)
   - [Slurm Cluster](#slurm-cluster)
     - [Controller Persistence](#controller-persistence)
@@ -40,10 +42,10 @@ helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
   --set crds.enabled=true
 ```
 
-Install the slurm-operator and its CRDs:
+Install the slurm-operator. CRDs are rendered from `templates/crds/` and
+installed by default (`crds.install=true`):
 
 ```sh
-helm install slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds
 helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
   --namespace=slinky --create-namespace
 ```
@@ -56,6 +58,60 @@ NAME                                      READY   STATUS    RESTARTS   AGE
 slurm-operator-5d86d75979-6wflf           1/1     Running   0          1m
 slurm-operator-webhook-567c84547b-kr7zq   1/1     Running   0          1m
 ```
+
+### CRD Configuration
+
+| Value | Default | Description |
+| ----- | ------- | ----------- |
+| `crds.install` | `true` | Install and upgrade CRDs from the chart. |
+| `crds.keep` | `true` | Retain CRDs when the chart is uninstalled (`helm.sh/resource-policy: keep`). |
+| `crds.annotations` | `{}` | Extra annotations on all CRDs. |
+| `crds.additionalLabels` | `{}` | Extra labels on all CRDs. |
+
+To manage CRDs outside Helm (for example, a GitOps controller or a prior
+install), disable chart-managed CRDs:
+
+```sh
+helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
+  --namespace=slinky --create-namespace \
+  --set crds.install=false
+```
+
+Regenerate chart CRD templates after API changes with `make manifests` (runs
+`controller-gen` and `hack/helmify-crds.sh`).
+
+### Installing CRDs Separately
+
+Install only CRDs from the slurm-operator chart, then install or upgrade the
+operator in a second step:
+
+```sh
+helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
+  --namespace=slinky --create-namespace \
+  --set operator.enabled=false \
+  --set webhook.enabled=false
+
+helm upgrade slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
+  --namespace=slinky
+```
+
+### Migrating From slurm-operator-crds
+
+The standalone `slurm-operator-crds` chart has been removed. CRDs now ship as
+Helm templates in the `slurm-operator` chart under `templates/crds/`.
+
+1. Uninstall the old chart (CRDs remain if they were installed with
+   `helm.sh/resource-policy: keep`, which is the default on the new chart):
+
+   ```sh
+   helm uninstall slurm-operator-crds
+   ```
+
+2. Upgrade or reinstall `slurm-operator` so the chart owns CRD lifecycle again
+   (default `crds.install=true`).
+
+If you previously set `crds.enabled=true` on `slurm-operator`, remove that
+flag; CRDs are installed by default via `crds.install` (default `true`).
 
 ### Namespace-Scoped Watching
 
@@ -74,17 +130,6 @@ helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
 > When namespace scoping is enabled, the operator and webhook will only
 > reconcile resources in the listed namespaces. Cluster-scoped resources (e.g.
 > Nodes) are always watched regardless of this setting.
-
-### With CRDs As Subchart
-
-If you intend to manage the slurm-operator and the CRDs in the same helm
-release, install it with the `--set 'crds.enabled=true'` argument.
-
-```sh
-helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
-  --set 'crds.enabled=true' \
-  --namespace=slinky --create-namespace
-```
 
 ### Without cert-manager
 

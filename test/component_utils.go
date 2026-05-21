@@ -88,21 +88,6 @@ func DoPrometheusInstall(ctx context.Context, t *testing.T, config *envconf.Conf
 	return ctx
 }
 
-func DoSlurmOperatorCRDInstall(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-	manager := helm.New(config.KubeconfigFile())
-
-	err := manager.RunInstall(
-		helm.WithName("slurm-operator-crds"),
-		helm.WithNamespace(SlinkyNamespace),
-		helm.WithChart(Basepath+"helm/slurm-operator-crds"),
-		helm.WithWait(),
-		helm.WithTimeout("10m"))
-	if err != nil {
-		t.Fatal("failed to invoke helm install slurm-operator-crds due to an error", err)
-	}
-	return ctx
-}
-
 func DoSlurmOperatorInstall(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
 	manager := helm.New(config.KubeconfigFile())
 

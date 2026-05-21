@@ -205,6 +205,11 @@ testing.
 Contains [helm] deployments, including the configuration files such as
 values.yaml.
 
+The `slurm-operator` chart renders CustomResourceDefinitions from
+`templates/crds/` (generated from `config/crd/bases` via `make manifests`).
+CRD install and upgrade are controlled by chart values (`crds.install`,
+`crds.keep`, and related fields).
+
 Helm is the recommended method to install this project into your Kubernetes
 cluster.
 
