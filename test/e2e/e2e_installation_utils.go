@@ -137,4 +137,3 @@ func uninstallSlurmOperator() types.Feature {
 			return test.DoUninstallHelmChart(ctx, t, config, "slurm-operator", test.SlinkyNamespace)
 		}).Feature()
 }
-

@@ -29,7 +29,7 @@ metadata:
     "helm.sh/resource-policy": keep
     {{- end }}
 EOF
-		if [[ -n "${cg_version}" ]]; then
+		if [[ -n ${cg_version} ]]; then
 			echo "    controller-gen.kubebuilder.io/version: ${cg_version}"
 		fi
 		cat <<'EOF'

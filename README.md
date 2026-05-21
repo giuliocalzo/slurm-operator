@@ -230,7 +230,8 @@ helm upgrade slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
   --namespace slinky --version $SLINKY_VERSION
 ```
 
-If you manage CRDs outside Helm, set `crds.install=false` on install and upgrade.
+If you manage CRDs outside Helm, set `crds.install=false` on install and
+upgrade.
 
 All Slurm charts may remain on the old Slinky release series (e.g. `v1.0.x`)
 despite the slurm-operator and its CRDs being on a newer Slinky release series
@@ -257,8 +258,8 @@ helm --namespace=slurm uninstall slurm
 helm --namespace=slinky uninstall slurm-operator
 ```
 
-If the CRDs were not removed by Helm (the default `crds.keep=true` retains
-them on uninstall) or were not installed via the slurm-operator chart:
+If the CRDs were not removed by Helm (the default `crds.keep=true` retains them
+on uninstall) or were not installed via the slurm-operator chart:
 
 ```bash
 kubectl delete customresourcedefinitions.apiextensions.k8s.io accountings.slinky.slurm.net

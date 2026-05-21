@@ -61,12 +61,12 @@ slurm-operator-webhook-567c84547b-kr7zq   1/1     Running   0          1m
 
 ### CRD Configuration
 
-| Value | Default | Description |
-| ----- | ------- | ----------- |
-| `crds.install` | `true` | Install and upgrade CRDs from the chart. |
-| `crds.keep` | `true` | Retain CRDs when the chart is uninstalled (`helm.sh/resource-policy: keep`). |
-| `crds.annotations` | `{}` | Extra annotations on all CRDs. |
-| `crds.additionalLabels` | `{}` | Extra labels on all CRDs. |
+| Value                   | Default | Description                                                                  |
+| ----------------------- | ------- | ---------------------------------------------------------------------------- |
+| `crds.install`          | `true`  | Install and upgrade CRDs from the chart.                                     |
+| `crds.keep`             | `true`  | Retain CRDs when the chart is uninstalled (`helm.sh/resource-policy: keep`). |
+| `crds.annotations`      | `{}`    | Extra annotations on all CRDs.                                               |
+| `crds.additionalLabels` | `{}`    | Extra labels on all CRDs.                                                    |
 
 To manage CRDs outside Helm (for example, a GitOps controller or a prior
 install), disable chart-managed CRDs:
@@ -107,11 +107,11 @@ Helm templates in the `slurm-operator` chart under `templates/crds/`.
    helm uninstall slurm-operator-crds
    ```
 
-2. Upgrade or reinstall `slurm-operator` so the chart owns CRD lifecycle again
+1. Upgrade or reinstall `slurm-operator` so the chart owns CRD lifecycle again
    (default `crds.install=true`).
 
-If you previously set `crds.enabled=true` on `slurm-operator`, remove that
-flag; CRDs are installed by default via `crds.install` (default `true`).
+If you previously set `crds.enabled=true` on `slurm-operator`, remove that flag;
+CRDs are installed by default via `crds.install` (default `true`).
 
 ### Namespace-Scoped Watching
 
