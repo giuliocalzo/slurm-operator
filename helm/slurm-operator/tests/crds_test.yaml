@@ -1,0 +1,51 @@
+---
+# SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+# SPDX-License-Identifier: Apache-2.0
+
+suite: test crds
+templates:
+  - crds/slinky.slurm.net_accountings.yaml
+  - crds/slinky.slurm.net_controllers.yaml
+  - crds/slinky.slurm.net_loginsets.yaml
+  - crds/slinky.slurm.net_nodesets.yaml
+  - crds/slinky.slurm.net_restapis.yaml
+  - crds/slinky.slurm.net_tokens.yaml
+release:
+  name: slurm-operator
+  namespace: slinky
+chart:
+  version: 1.2.0-rc1
+  appVersion: "25.11"
+tests:
+  - it: should render CRDs by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: CustomResourceDefinition
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: should not render CRDs when install is disabled
+    set:
+      crds.install: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not add keep annotation when keep is disabled
+    set:
+      crds.keep: false
+    asserts:
+      - notExists:
+          path: metadata.annotations["helm.sh/resource-policy"]
+
+  - it: should merge custom CRD annotations
+    set:
+      crds.annotations:
+        example.com/team: slurm
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/team"]
+          value: slurm

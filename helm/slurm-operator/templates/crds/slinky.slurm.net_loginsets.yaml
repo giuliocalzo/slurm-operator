@@ -1,29 +1,45 @@
----
+{{- if .Values.crds.install }}
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    {{- if .Values.crds.keep }}
+    "helm.sh/resource-policy": keep
+    {{- end }}
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: accountings.slinky.slurm.net
+    {{- with .Values.crds.annotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.crds.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  name: loginsets.slinky.slurm.net
 spec:
   group: slinky.slurm.net
   names:
-    kind: Accounting
-    listKind: AccountingList
-    plural: accountings
+    kind: LoginSet
+    listKind: LoginSetList
+    plural: loginsets
     shortNames:
-    - slurmdbd
-    singular: accounting
+    - loginsets
+    - lss
+    - sackd
+    singular: loginset
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - description: The current number of pods.
+      jsonPath: .status.replicas
+      name: REPLICAS
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
     name: v1beta1
     schema:
       openAPIV3Schema:
-        description: Accounting is the Schema for the accountings API
+        description: LoginSet is the Schema for the loginsets API
         properties:
           apiVersion:
             description: |-
@@ -43,106 +59,55 @@ spec:
           metadata:
             type: object
           spec:
-            description: AccountingSpec defines the desired state of Accounting
+            description: LoginSetSpec defines the desired state of LoginSet
             properties:
-              external:
-                default: false
-                description: |-
-                  external indicates if this component is external to Kubernetes or not.
-                  If true, then externalConfig is used and other fields are ignored.
-                type: boolean
-              externalConfig:
-                description: ExternalConfig describes how to communicate with this
-                  external component.
+              controllerRef:
+                description: controllerRef is a reference to the Controller CR to
+                  which this has membership.
                 properties:
-                  host:
-                    description: Host defines the hostname or IP address to communicate
-                      with.
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
                     type: string
-                  port:
-                    description: Port defines the port to communicate over.
-                    type: integer
-                required:
-                - host
-                - port
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
                 type: object
-              extraConf:
+                x-kubernetes-map-type: atomic
+              extraSshdConfig:
                 description: |-
-                  ExtraConf is appended onto the end of the `slurmdbd.conf` file.
-                  Ref: https://slurm.schedmd.com/slurmdbd.conf.html
+                  ExtraSshdConfig is added to the end of `sshd_config`.
+                  Ref: https://man7.org/linux/man-pages/man5/sshd_config.5.html
                 type: string
-              jwksKeyRef:
-                description: Slurm `auth/jwt` JWKS key authentication.
-                properties:
-                  key:
-                    description: The key to select.
-                    type: string
-                  name:
-                    default: ""
-                    description: |-
-                      Name of the referent.
-                      This field is effectively required, but due to backwards compatibility is
-                      allowed to be empty. Instances of this type with an empty value here are
-                      almost certainly wrong.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                  optional:
-                    description: Specify whether the ConfigMap or its key must be
-                      defined
-                    type: boolean
-                required:
-                - key
-                type: object
-                x-kubernetes-map-type: atomic
-              jwtHs256KeyRef:
+              initconf:
                 description: |-
-                  Slurm `auth/jwt` JWT HS256 key authentication.
-
-                  Deprecated: use JwtKeyRef instead.
-                properties:
-                  key:
-                    description: The key of the secret to select from.  Must be a
-                      valid secret key.
-                    type: string
-                  name:
-                    default: ""
-                    description: |-
-                      Name of the referent.
-                      This field is effectively required, but due to backwards compatibility is
-                      allowed to be empty. Instances of this type with an empty value here are
-                      almost certainly wrong.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                  optional:
-                    description: Specify whether the Secret or its key must be defined
-                    type: boolean
-                required:
-                - key
+                  The initconf container configuration.
+                  See corev1.Container spec.
+                  Ref: https://github.com/kubernetes/api/blob/master/core/v1/types.go#L2885
                 type: object
-                x-kubernetes-map-type: atomic
-              jwtKeyRef:
-                description: Slurm `auth/jwt` JWT key authentication.
-                properties:
-                  key:
-                    description: The key of the secret to select from.  Must be a
-                      valid secret key.
-                    type: string
-                  name:
-                    default: ""
-                    description: |-
-                      Name of the referent.
-                      This field is effectively required, but due to backwards compatibility is
-                      allowed to be empty. Instances of this type with an empty value here are
-                      almost certainly wrong.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                  optional:
-                    description: Specify whether the Secret or its key must be defined
-                    type: boolean
-                required:
-                - key
+                x-kubernetes-preserve-unknown-fields: true
+              login:
+                description: |-
+                  The login container configuration.
+                  See corev1.Container spec.
+                  Ref: https://github.com/kubernetes/api/blob/master/core/v1/types.go#L2885
                 type: object
-                x-kubernetes-map-type: atomic
+                x-kubernetes-preserve-unknown-fields: true
+              replicas:
+                default: 1
+                description: |-
+                  replicas is the desired number of replicas of the given Template.
+                  These are replicas in the sense that they are instantiations of the
+                  same Template, but individual replicas also have a consistent identity.
+                  If unspecified, defaults to 1.
+                format: int32
+                type: integer
+              rootSshAuthorizedKeys:
+                description: RootSshAuthorizedKeys is `root/.ssh/authorized_keys`.
+                type: string
               service:
                 description: Service defines a template for a Kubernetes Service object.
                 properties:
@@ -190,8 +155,9 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                 type: object
-              slurmKeyRef:
-                description: Slurm `auth/slurm` key authentication.
+              sssdConfRef:
+                description: SssdConfRef is a reference to a secret containing the
+                  `sssd.conf`.
                 properties:
                   key:
                     description: The key of the secret to select from.  Must be a
@@ -213,75 +179,54 @@ spec:
                 - key
                 type: object
                 x-kubernetes-map-type: atomic
-              slurmdbd:
+              strategy:
                 description: |-
-                  The slurmdbd container configuration.
-                  See corev1.Container spec.
-                  Ref: https://github.com/kubernetes/api/blob/master/core/v1/types.go#L2885
-                type: object
-                x-kubernetes-preserve-unknown-fields: true
-              storageConfig:
-                description: StorageConfig is the configuration for mysql/mariadb
-                  access.
+                  Strategy is the deployment strategy to use to replace existing pods with new ones.
+                  Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
                 properties:
-                  database:
-                    default: slurm_acct_db
+                  rollingUpdate:
                     description: |-
-                      Specify the name of the database as the location where accounting records
-                      are written.
-                      Default is "slurm_acct_db".
-                      Ref: https://slurm.schedmd.com/slurmdbd.conf.html#OPT_StorageLoc
-                    type: string
-                  host:
-                    description: |-
-                      Define the name of the host the database is running where we are going to
-                      store the data.
-                      Ref: https://slurm.schedmd.com/slurmdbd.conf.html#OPT_StorageHost
-                    type: string
-                  passwordKeyRef:
-                    description: |-
-                      PasswordKeyRef is a reference to a secret containing the password for the
-                      user, specified by username, to access the given database.
-                      Ref: https://slurm.schedmd.com/slurmdbd.conf.html#OPT_StoragePass
+                      Rolling update config params. Present only if DeploymentStrategyType =
+                      RollingUpdate.
                     properties:
-                      key:
-                        description: The key of the secret to select from.  Must be
-                          a valid secret key.
-                        type: string
-                      name:
-                        default: ""
+                      maxSurge:
+                        anyOf:
+                        - type: integer
+                        - type: string
                         description: |-
-                          Name of the referent.
-                          This field is effectively required, but due to backwards compatibility is
-                          allowed to be empty. Instances of this type with an empty value here are
-                          almost certainly wrong.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                        type: string
-                      optional:
-                        description: Specify whether the Secret or its key must be
-                          defined
-                        type: boolean
-                    required:
-                    - key
+                          The maximum number of pods that can be scheduled above the desired number of
+                          pods.
+                          Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%).
+                          This can not be 0 if MaxUnavailable is 0.
+                          Absolute number is calculated from percentage by rounding up.
+                          Defaults to 25%.
+                          Example: when this is set to 30%, the new ReplicaSet can be scaled up immediately when
+                          the rolling update starts, such that the total number of old and new pods do not exceed
+                          130% of desired pods. Once old pods have been killed,
+                          new ReplicaSet can be scaled up further, ensuring that total number of pods running
+                          at any time during the update is at most 130% of desired pods.
+                        x-kubernetes-int-or-string: true
+                      maxUnavailable:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          The maximum number of pods that can be unavailable during the update.
+                          Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%).
+                          Absolute number is calculated from percentage by rounding down.
+                          This can not be 0 if MaxSurge is 0.
+                          Defaults to 25%.
+                          Example: when this is set to 30%, the old ReplicaSet can be scaled down to 70% of desired pods
+                          immediately when the rolling update starts. Once new pods are ready, old ReplicaSet
+                          can be scaled down further, followed by scaling up the new ReplicaSet, ensuring
+                          that the total number of pods available at all times during the update is at
+                          least 70% of desired pods.
+                        x-kubernetes-int-or-string: true
                     type: object
-                    x-kubernetes-map-type: atomic
-                  port:
-                    default: 3306
-                    description: |-
-                      The port number that the Slurm Database Daemon (slurmdbd) communicates
-                      with the database.
-                      Default is 3306.
-                      Ref: https://slurm.schedmd.com/slurmdbd.conf.html#OPT_StoragePort
-                    type: integer
-                  username:
-                    description: |-
-                      Define the name of the user we are going to connect to the database with
-                      to store the job accounting data.
-                      Ref: https://slurm.schedmd.com/slurmdbd.conf.html#OPT_StorageUser
+                  type:
+                    description: Type of deployment. Can be "Recreate" or "RollingUpdate".
+                      Default is RollingUpdate.
                     type: string
-                required:
-                - host
-                - passwordKeyRef
                 type: object
               template:
                 description: |-
@@ -320,20 +265,15 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                 type: object
+            required:
+            - controllerRef
+            - sssdConfRef
             type: object
-            x-kubernetes-validations:
-            - message: slurmKeyRef must be set when external is false
-              rule: '!self.external ? has(self.slurmKeyRef) : true'
-            - message: jwtKeyRef or jwtHs256KeyRef must be set when external is false
-              rule: '!self.external ? has(self.jwtKeyRef) || has(self.jwtHs256KeyRef)
-                : true'
-            - message: externalConfig must be set when external is true
-              rule: 'self.external ? has(self.externalConfig) : true'
           status:
-            description: AccountingStatus defines the observed state of Accounting
+            description: LoginSetStatus defines the observed state of LoginSet
             properties:
               conditions:
-                description: Represents the latest available observations of a Accounting's
+                description: Represents the latest available observations of a LoginSet's
                   current state.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -393,9 +333,24 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              replicas:
+                description: Total number of non-terminated pods targeted by this
+                  LoginSet (their labels match the Selector).
+                format: int32
+                type: integer
+              selector:
+                description: Add Selector to status for HPA support in the scale subresource.
+                type: string
+            required:
+            - selector
             type: object
         type: object
     served: true
     storage: true
     subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
       status: {}
+{{- end }}

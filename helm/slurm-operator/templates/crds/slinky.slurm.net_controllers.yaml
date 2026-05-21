@@ -1,9 +1,19 @@
----
+{{- if .Values.crds.install }}
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    {{- if .Values.crds.keep }}
+    "helm.sh/resource-policy": keep
+    {{- end }}
     controller-gen.kubebuilder.io/version: v0.20.1
+    {{- with .Values.crds.annotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.crds.additionalLabels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   name: controllers.slinky.slurm.net
 spec:
   group: slinky.slurm.net
@@ -772,3 +782,4 @@ spec:
     storage: true
     subresources:
       status: {}
+{{- end }}

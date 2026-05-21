@@ -20,10 +20,6 @@ Slurm Operator
 
 Kubernetes: `>= 1.29.0-0`
 
-| Repository | Name | Version |
-|------------|------|---------|
-| file://../slurm-operator-crds | slurm-operator-crds | 1.2.0-rc1 |
-
 ## Values
 
 | Key | Type | Default | Description |
@@ -32,8 +28,11 @@ Kubernetes: `>= 1.29.0-0`
 | certManager.enabled | bool | `true` | Enable cert-manager for certificate management. |
 | certManager.renewBefore | string | `"8760h0m0s"` | Certificate renewal time. Should be before the expiration. |
 | certManager.secretName | string | `"slurm-operator-webhook-ca"` | The secret to be (created and) mounted. |
-| crds | object | `{"enabled":false}` | Configure Custom Resource Definitions (CRDs). |
-| crds.enabled | bool | `false` | Whether this helm chart should manage the CRD and its upgrades. |
+| crds | object | `{"additionalLabels":{},"annotations":{},"install":true,"keep":true}` | Configure Custom Resource Definitions (CRDs). |
+| crds.additionalLabels | object | `{}` | Additional labels to be added to all CRDs. |
+| crds.annotations | object | `{}` | Annotations to be added to all CRDs. |
+| crds.install | bool | `true` | Install and upgrade CRDs. |
+| crds.keep | bool | `true` | Keep CRDs on chart uninstall. |
 | extraObjects | list | `[]` | Extra Kubernetes objects to deploy alongside the chart. Each entry is rendered as a standalone Kubernetes object. Supports Helm templating (e.g. {{ .Release.Namespace }}). |
 | fullnameOverride | string | `""` | Overrides the full name of the release. |
 | imagePullPolicy | string | `"IfNotPresent"` | Set the default image pull policy. |

@@ -331,7 +331,7 @@ manifests: controller-gen yq-bin ## Generate WebhookConfiguration, ClusterRole a
 	$(CONTROLLER_GEN) rbac:roleName=manager-role paths=./cmd/manager/... paths=./internal/controller/... output:rbac:dir=config/rbac/manager
 	$(CONTROLLER_GEN) rbac:roleName=webhook-role webhook paths=./cmd/webhook/... paths=./internal/webhook/... output:rbac:dir=config/rbac/webhook output:webhook:dir=./config/webhook
 
-	$(CONTROLLER_GEN) crd paths=./api/... output:crd:artifacts:config=helm/slurm-operator-crds/templates
+	./hack/helmify-crds.sh
 
 	mkdir -p $(OPERATOR_HELM_FILES)
 	$(YQ) '{"rules": .rules}' config/rbac/manager/role.yaml > $(OPERATOR_HELM_FILES)/operator_rbac_rules.yaml

@@ -21,9 +21,3 @@ maintainers:
   - name: SchedMD LLC.
     email: slinky@schedmd.com
     url: https://support.schedmd.com/
-
-dependencies:
-  - name: slurm-operator-crds
-    version: 1.2.0-rc1
-    condition: crds.enabled
-    repository: file://../slurm-operator-crds

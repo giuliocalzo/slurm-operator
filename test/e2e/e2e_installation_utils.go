@@ -111,11 +111,6 @@ func installSlurm(slurmConfig test.SlurmInstallationConfig) types.Feature {
 		}).Feature()
 }
 
-func installSlurmOperatorCRDS() types.Feature {
-	return features.New("Helm install slurm-operator-crds").
-		Setup(test.DoSlurmOperatorCRDInstall).Feature()
-}
-
 func installSlurmOperator() types.Feature {
 	return features.New("Helm install slurm-operator").
 		Setup(test.DoSlurmOperatorInstall).
@@ -140,12 +135,5 @@ func uninstallSlurmOperator() types.Feature {
 	return features.New("Helm uninstall slurm-operator").
 		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
 			return test.DoUninstallHelmChart(ctx, t, config, "slurm-operator", test.SlinkyNamespace)
-		}).Feature()
-}
-
-func uninstallSlurmOperatorCRDs() types.Feature {
-	return features.New("Helm uninstall slurm-operator-crds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			return test.DoUninstallHelmChart(ctx, t, config, "slurm-operator-crds", test.SlinkyNamespace)
 		}).Feature()
 }
