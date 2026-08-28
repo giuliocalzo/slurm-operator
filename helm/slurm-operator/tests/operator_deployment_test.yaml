@@ -100,13 +100,13 @@ tests:
         profile: true
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].args[20]
+          path: spec.template.spec.containers[0].args[22]
           value: --profile
       - equal:
-          path: spec.template.spec.containers[0].args[21]
+          path: spec.template.spec.containers[0].args[23]
           value: --profile-addr
       - equal:
-          path: spec.template.spec.containers[0].args[23]
+          path: spec.template.spec.containers[0].args[25]
           value: --leader-elect
   - it: should set namespace
     set:
@@ -270,10 +270,10 @@ tests:
         metricsPort: 0
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].args[18]
+          path: spec.template.spec.containers[0].args[20]
           value: --metrics-addr
       - equal:
-          path: spec.template.spec.containers[0].args[19]
+          path: spec.template.spec.containers[0].args[21]
           value: "0"
   - it: should set the metrics address from metricsPort
     set:
@@ -281,10 +281,10 @@ tests:
         metricsPort: 9090
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].args[18]
+          path: spec.template.spec.containers[0].args[20]
           value: --metrics-addr
       - equal:
-          path: spec.template.spec.containers[0].args[19]
+          path: spec.template.spec.containers[0].args[21]
           value: :9090
   - it: should fail when metricsSecure is enabled with a string zero metrics port
     set:
@@ -329,3 +329,22 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: operator.metricsPort must be an integer between 0 and 65535
+  - it: should render the slow start initial batch size when set
+    set:
+      operator:
+        slowStartInitialBatchSize: 64
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --slow-start-initial-batch-size
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "64"
+  - it: should omit the slow start initial batch size when zero
+    set:
+      operator:
+        slowStartInitialBatchSize: 0
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --slow-start-initial-batch-size
