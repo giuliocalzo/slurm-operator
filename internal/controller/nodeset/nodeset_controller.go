@@ -28,6 +28,7 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/indexes"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/podcontrol"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/slurmcontrol"
+	"github.com/SlinkyProject/slurm-operator/internal/utils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/durationstore"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/refresolver"
@@ -70,10 +71,16 @@ const (
 
 func init() {
 	flag.IntVar(&maxConcurrentReconciles, "nodeset-workers", maxConcurrentReconciles, "Max concurrent workers for NodeSet controller.")
+	flag.IntVar(&slowStartInitialBatchSize, "slow-start-initial-batch-size", slowStartInitialBatchSize,
+		"Initial concurrency for batched NodeSet sync operations. Each successful batch doubles until the work is exhausted. Values below 1 are treated as 1.")
 }
 
 var (
 	maxConcurrentReconciles = 1
+
+	// slowStartInitialBatchSize is the starting concurrency for the
+	// utils.SlowStartBatch calls made while syncing a NodeSet.
+	slowStartInitialBatchSize = utils.SlowStartInitialBatchSize
 
 	// this is a short cut for any sub-functions to notify the reconcile how long to wait to requeue
 	durationStore = durationstore.NewDurationStore(durationstore.Greater)
@@ -81,6 +88,14 @@ var (
 	onceBackoffGC     sync.Once
 	failedPodsBackoff = flowcontrol.NewBackOff(1*time.Second, 15*time.Minute)
 )
+
+// slowStartBatchSize returns the initial batch size to hand to
+// utils.SlowStartBatch. The value is clamped to at least 1 because
+// SlowStartBatch skips every batch when given a smaller size, which would
+// silently report success without performing any work.
+func slowStartBatchSize() int {
+	return max(slowStartInitialBatchSize, 1)
+}
 
 // NodeSetReconciler reconciles a NodeSet object
 type NodeSetReconciler struct {

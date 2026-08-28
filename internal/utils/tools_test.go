@@ -30,6 +30,7 @@ func TestSlowStartBatch(t *testing.T) {
 	tests := []struct {
 		name              string
 		count             int
+		initialBatchSize  int
 		callLimit         int
 		fn                func(int) error
 		expectedSuccesses int
@@ -39,6 +40,7 @@ func TestSlowStartBatch(t *testing.T) {
 		{
 			name:              "callLimit = 0 (all fail)",
 			count:             10,
+			initialBatchSize:  1,
 			callLimit:         0,
 			fn:                fn,
 			expectedSuccesses: 0,
@@ -48,6 +50,7 @@ func TestSlowStartBatch(t *testing.T) {
 		{
 			name:              "callLimit = count (all succeed)",
 			count:             10,
+			initialBatchSize:  1,
 			callLimit:         10,
 			fn:                fn,
 			expectedSuccesses: 10,
@@ -57,18 +60,54 @@ func TestSlowStartBatch(t *testing.T) {
 		{
 			name:              "callLimit < count (some succeed)",
 			count:             10,
+			initialBatchSize:  1,
 			callLimit:         5,
 			fn:                fn,
 			expectedSuccesses: 5,
 			expectedErr:       fakeErr,
 			expectedCallCnt:   7, // 1(first batch) + 2(2nd batch) + 4(3rd batch) = 7
 		},
+		{
+			name:              "initialBatchSize > 1 (all succeed)",
+			count:             10,
+			initialBatchSize:  4,
+			callLimit:         10,
+			fn:                fn,
+			expectedSuccesses: 10,
+			expectedErr:       nil,
+			expectedCallCnt:   10, // 4(first batch) + 6(2nd batch, capped by remaining) = 10
+		},
+		{
+			name:             "initialBatchSize > 1 (first batch fails)",
+			count:            10,
+			initialBatchSize: 4,
+			callLimit:        2,
+			fn:               fn,
+			// A larger initial batch trades error containment for fewer
+			// barriers: 2 calls fail here instead of the 1 that
+			// initialBatchSize=1 would allow.
+			expectedSuccesses: 2,
+			expectedErr:       fakeErr,
+			expectedCallCnt:   4, // 4(first batch), remaining batches skipped
+		},
+		{
+			name:             "initialBatchSize < 1 (silent no-op)",
+			count:            10,
+			initialBatchSize: 0,
+			callLimit:        10,
+			fn:               fn,
+			// Documents why callers must clamp to at least 1: the batch loop
+			// never runs and success is reported without doing any work.
+			expectedSuccesses: 0,
+			expectedErr:       nil,
+			expectedCallCnt:   0,
+		},
 	}
 
 	for _, test := range tests {
 		callCnt = 0
 		callLimit = test.callLimit
-		successes, err := SlowStartBatch(test.count, 1, test.fn)
+		successes, err := SlowStartBatch(test.count, test.initialBatchSize, test.fn)
 
 		require.Equal(t, test.expectedSuccesses, successes, "%s: unexpected processed batch size", test.name)
 		require.ErrorIs(t, err, test.expectedErr, "%s: unexpected error", test.name)

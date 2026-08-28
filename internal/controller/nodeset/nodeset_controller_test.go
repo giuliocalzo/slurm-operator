@@ -6,9 +6,12 @@ package nodeset
 import (
 	"context"
 	"errors"
+	"sync"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 	"k8s.io/utils/set"
@@ -23,6 +26,7 @@ import (
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	nodesetutils "github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/utils"
+	"github.com/SlinkyProject/slurm-operator/internal/utils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/testutils"
 )
 
@@ -276,3 +280,69 @@ var _ = Describe("Slurm NodeSet", func() {
 		}, SpecTimeout(testutils.Timeout))
 	})
 })
+
+func TestSlowStartBatchSize(t *testing.T) {
+	original := slowStartInitialBatchSize
+	t.Cleanup(func() { slowStartInitialBatchSize = original })
+
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{
+			name:       "default matches the utils constant",
+			configured: utils.SlowStartInitialBatchSize,
+			want:       utils.SlowStartInitialBatchSize,
+		},
+		{
+			name:       "zero is clamped",
+			configured: 0,
+			want:       1,
+		},
+		{
+			name:       "negative is clamped",
+			configured: -8,
+			want:       1,
+		},
+		{
+			name:       "configured value is passed through",
+			configured: 64,
+			want:       64,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			slowStartInitialBatchSize = test.configured
+			require.Equal(t, test.want, slowStartBatchSize())
+		})
+	}
+}
+
+// TestSlowStartBatchSizeNoSilentNoOp guards against a misconfigured
+// --slow-start-initial-batch-size below 1 turning every batched sync into a
+// no-op that still reports success.
+func TestSlowStartBatchSizeNoSilentNoOp(t *testing.T) {
+	original := slowStartInitialBatchSize
+	t.Cleanup(func() { slowStartInitialBatchSize = original })
+
+	const count = 10
+
+	for _, configured := range []int{0, -1} {
+		slowStartInitialBatchSize = configured
+
+		var lock sync.Mutex
+		callCnt := 0
+		successes, err := utils.SlowStartBatch(count, slowStartBatchSize(), func(int) error {
+			lock.Lock()
+			defer lock.Unlock()
+			callCnt++
+			return nil
+		})
+
+		require.NoError(t, err, "configured=%d", configured)
+		require.Equal(t, count, callCnt, "configured=%d: work was skipped", configured)
+		require.Equal(t, count, successes, "configured=%d", configured)
+	}
+}
