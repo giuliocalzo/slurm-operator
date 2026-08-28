@@ -69,6 +69,7 @@ Kubernetes: `>= 1.29.0-0`
 | operator.securityContext | object | `{}` | Container-level security context for the operator container. Ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-container |
 | operator.serviceAccount.create | bool | `true` | Allows chart to create the service account. |
 | operator.serviceAccount.name | string | `""` | Set the service account to use (and create). |
+| operator.slowStartInitialBatchSize | int | `1` | Set the initial concurrency for batched NodeSet sync operations. Each successful batch doubles until the work is exhausted, so raising this reduces the number of sequential barriers on large NodeSets at the cost of weaker error batching. Values below 1 are treated as 1. |
 | operator.slurmclientWorkers | int | `2` | Set the max concurrent workers for the SlurmClient controller. |
 | operator.tokenWorkers | int | `4` | Set the max concurrent workers for the Token controller. |
 | operator.tolerations | list | `[]` | Tolerations for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/ |

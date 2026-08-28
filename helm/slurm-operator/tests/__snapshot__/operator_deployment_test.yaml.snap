@@ -45,6 +45,8 @@ manifest should match snapshot:
                 - "4"
                 - --slurmclient-workers
                 - "2"
+                - --slow-start-initial-batch-size
+                - "1"
                 - --zap-log-level
                 - info
                 - --health-addr
