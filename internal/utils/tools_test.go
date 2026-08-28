@@ -115,3 +115,28 @@ func TestSlowStartBatch(t *testing.T) {
 		require.Equal(t, test.expectedCallCnt, callCnt, "%s: slowStartBatch() still tries calls after a batch fails", test.name)
 	}
 }
+
+// TestSlowStartBatchRecoversPanic asserts that a panic escaping fn is turned
+// into a batch error. The calls run on bare goroutines, so without the recover
+// the panic would terminate the whole process rather than fail this batch, and
+// this test would take the test binary down with it.
+func TestSlowStartBatchRecoversPanic(t *testing.T) {
+	var lock sync.Mutex
+	callCnt := 0
+	fn := func(idx int) error {
+		lock.Lock()
+		callCnt++
+		lock.Unlock()
+		if idx == 2 {
+			panic("boom")
+		}
+		return nil
+	}
+
+	successes, err := SlowStartBatch(10, 4, fn)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "boom")
+	require.Equal(t, 3, successes, "the three non-panicking calls in the batch should count as successes")
+	require.Equal(t, 4, callCnt, "remaining batches should be skipped after the panic")
+}
