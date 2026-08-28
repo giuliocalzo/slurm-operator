@@ -634,6 +634,42 @@ func (r *realSlurmControl) CalculateNodeStatus(ctx context.Context, nodeset *sli
 
 const infiniteDuration = time.Duration(math.MaxInt64)
 
+// maxTimeLimitMinutes is the largest whole-minute count representable as a
+// time.Duration. Slurm reports time limits as an unsigned 32-bit minute count,
+// so its upper range exceeds int64 nanoseconds and would silently wrap negative.
+const maxTimeLimitMinutes = int64(math.MaxInt64) / int64(time.Minute)
+
+// jobDeadline computes when a running job must complete. It reports false when
+// Slurm did not supply a usable start time or time limit, in which case the job
+// has no known deadline and callers must not infer one.
+func jobDeadline(
+	startTime slurmapi.V0044Uint64NoValStruct,
+	timeLimit slurmapi.V0044Uint32NoValStruct,
+) (time.Time, bool) {
+	if !ptr.Deref(startTime.Set, false) {
+		return time.Time{}, false
+	}
+	start := time.Unix(ptr.Deref(startTime.Number, 0), 0)
+
+	if ptr.Deref(timeLimit.Infinite, false) {
+		return start.Add(infiniteDuration), true
+	}
+	if !ptr.Deref(timeLimit.Set, false) {
+		return time.Time{}, false
+	}
+
+	minutes := int64(ptr.Deref(timeLimit.Number, 0))
+	switch {
+	case minutes < 0:
+		// Only reachable because the generated field is signed; see
+		// SlinkyProject/slurm-client, where `number` should be uint32.
+		return time.Time{}, false
+	case minutes >= maxTimeLimitMinutes:
+		return start.Add(infiniteDuration), true
+	}
+	return start.Add(time.Duration(minutes) * time.Minute), true
+}
+
 // GetNodeDeadlines implements SlurmControlInterface.
 func (r *realSlurmControl) GetNodeDeadlines(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pods []*corev1.Pod) (*timestore.TimeStore, error) {
 	logger := log.FromContext(ctx)
@@ -670,19 +706,20 @@ func (r *realSlurmControl) GetNodeDeadlines(ctx context.Context, nodeset *slinky
 			continue
 		}
 
-		// Get startTime, when the job was launched on the Slurm worker.
+		// Get startTime, when the job was launched on the Slurm worker, and the
+		// timeLimit, the wall time of the job.
 		startTime_NoVal := ptr.Deref(job.StartTime, slurmapi.V0044Uint64NoValStruct{})
-		startTime := time.Unix(ptr.Deref(startTime_NoVal.Number, 0), 0)
-		// Get the timeLimit, the wall time of the job.
 		timeLimit_NoVal := ptr.Deref(job.TimeLimit, slurmapi.V0044Uint32NoValStruct{})
-		timeLimit := time.Duration(ptr.Deref(timeLimit_NoVal.Number, 0)) * time.Minute
-		if ptr.Deref(timeLimit_NoVal.Infinite, false) {
-			timeLimit = infiniteDuration
+		deadline, ok := jobDeadline(startTime_NoVal, timeLimit_NoVal)
+		if !ok {
+			logger.V(2).Info("job has no usable deadline, skipping",
+				"job", ptr.Deref(job.JobId, 0))
+			continue
 		}
 
 		// Push time/duration into the fancy map for each node allocated to the job.
 		for _, slurmNodeName := range slurmNodeNames {
-			ts.Push(slurmNodeName, startTime.Add(timeLimit))
+			ts.Push(slurmNodeName, deadline)
 		}
 	}
 
