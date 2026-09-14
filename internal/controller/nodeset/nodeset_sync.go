@@ -1637,19 +1637,6 @@ func (r *NodeSetReconciler) syncRollingUpdate(
 ) error {
 	logger := log.FromContext(ctx)
 
-	_, oldPods := findUpdatedPods(pods, hash)
-
-	unhealthyPods, _ := nodesetutils.SplitUnhealthyPods(oldPods)
-	if len(unhealthyPods) > 0 {
-		logger.Info("Delete unhealthy pods for Rolling Update",
-			"unhealthyPods", len(unhealthyPods))
-		r.eventRecorder.Eventf(nodeset, nil, corev1.EventTypeNormal, RollingUpdateReason, "RollingUpdate",
-			"Rolling update: deleting %d unhealthy old pod(s)", len(unhealthyPods))
-		if err := r.doPodScale(ctx, nodeset, nil, unhealthyPods, nil); err != nil {
-			return err
-		}
-	}
-
 	podsToDelete, _ := r.splitUpdatePods(ctx, nodeset, pods, hash)
 	if len(podsToDelete) > 0 {
 		logger.Info("Scale-in pods for Rolling Update",
@@ -1665,9 +1652,10 @@ func (r *NodeSetReconciler) syncRollingUpdate(
 }
 
 // splitUpdatePods returns two pod lists based on UpdateStrategy type.
-// For RollingUpdate, unavailable new pods and replica slots with no live pod
-// count against maxUnavailable, while unhealthy old pods neither consume the
-// budget nor become deletion candidates (callers condemn them separately).
+// For RollingUpdate, every pod that is not available counts against
+// maxUnavailable: unavailable new pods, replica slots with no live pod, and
+// unhealthy old pods. Unhealthy old pods are also the first deletion
+// candidates, because replacing them is what makes the update progress.
 func (r *NodeSetReconciler) splitUpdatePods(
 	ctx context.Context,
 	nodeset *slinkyv1beta1.NodeSet,
@@ -1680,58 +1668,101 @@ func (r *NodeSetReconciler) splitUpdatePods(
 	default:
 		fallthrough
 	case slinkyv1beta1.RollingUpdateNodeSetStrategyType:
-		newPods, oldPods := findUpdatedPods(pods, hash)
-		_, healthyOldPods := nodesetutils.SplitUnhealthyPods(oldPods)
+		newPods, _ := findUpdatedPods(pods, hash)
+		replacePods, updatePods, keepPods := splitOldPods(nodeset, pods, hash)
 
-		total := int(ptr.Deref(nodeset.Spec.Replicas, defaults.DefaultNodeSetReplicas))
-		if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeDaemonset {
-			total = len(pods)
-		}
+		podsToDelete = make([]*corev1.Pod, 0, len(replacePods)+len(updatePods))
+		podsToDelete = append(podsToDelete, replacePods...)
+		podsToDelete = append(podsToDelete, updatePods...)
 
-		// Replica slots with no live pod at either revision (e.g. a
-		// terminating pod awaiting its replacement) are unavailable capacity.
-		// In daemonset mode the node set is not bounded by Replicas, so
-		// remnants on removed nodes must not consume the budget.
-		var numUnavailable int
-		if nodeset.Spec.ScalingMode != slinkyv1beta1.ScalingModeDaemonset {
-			numUnavailable = mathutils.Clamp(total-len(newPods)-len(oldPods), 0, total)
-		}
-		now := metav1.Now()
-		for _, pod := range newPods {
-			if !podutil.IsPodAvailable(pod, nodeset.Spec.MinReadySeconds, now) {
-				numUnavailable++
-			}
-		}
-
-		maxUnavailable := mathutils.GetScaledValueFromIntOrPercent(nodeset.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable, total, true, 1)
-		remainingUnavailable := mathutils.Clamp((maxUnavailable - numUnavailable), 0, maxUnavailable)
-		podsToDelete, remainingOldPods := nodesetutils.SplitActivePods(healthyOldPods, remainingUnavailable)
-
-		remainingPods := make([]*corev1.Pod, len(newPods))
-		copy(remainingPods, newPods)
-		remainingPods = append(remainingPods, remainingOldPods...)
+		remainingPods := make([]*corev1.Pod, 0, len(newPods)+len(keepPods))
+		remainingPods = append(remainingPods, newPods...)
+		remainingPods = append(remainingPods, keepPods...)
 
 		logger.V(1).Info("calculated pod lists for update",
-			"maxUnavailable", maxUnavailable,
-			"updatePods", len(podsToDelete),
+			"replacePods", len(replacePods),
+			"updatePods", len(updatePods),
 			"remainingPods", len(remainingPods))
 		return podsToDelete, remainingPods
 	case slinkyv1beta1.ScheduledUpdateNodeSetStrategyType:
+		// Unhealthy old pods are replaced whether or not a maintenance
+		// reservation is active, at the rate a rolling update would.
+		replacePods, _, _ := splitOldPods(nodeset, pods, hash)
+		podsToDelete = append(podsToDelete, replacePods...)
+
 		eligiblePods, err := r.slurmControl.GetPodsUnderReservation(ctx, nodeset, pods)
 		if err != nil {
 			if !errors.Is(err, slurmcontrol.ErrNoSlurmClient) {
 				logger.Error(err, "failed to determine pods under reservation", "NodeSet", klog.KObj(nodeset))
 			}
-			return nil, nil
+			return podsToDelete, nil
 		}
 
-		podsToDelete = append(podsToDelete, eligiblePods...)
+		podsToDelete = append(podsToDelete, nodesetutils.ExcludePods(eligiblePods, replacePods)...)
 
 		return podsToDelete, nil
 
 	case slinkyv1beta1.OnDeleteNodeSetStrategyType:
 		return nil, nil
 	}
+}
+
+// splitOldPods partitions the old revision pods into the unhealthy ones to
+// replace, the healthy ones to condemn for the update, and the ones that are
+// kept until a later reconcile.
+//
+// Everything that is already unavailable spends maxUnavailable first: new pods
+// that are not available yet, replica slots with no live pod, and unhealthy old
+// pods. What is left of the budget is what healthy old pods may be condemned
+// with.
+//
+// Replacing an unhealthy old pod does not make the NodeSet any less available
+// than it already is, so replacements do not draw on that remainder, and at
+// least one is always allowed, otherwise an update whose old pods are all
+// unhealthy could never progress. Replacements are still rate limited by
+// maxUnavailable, because an unhealthy pod may be failing its readiness probe
+// while it still runs jobs, and condemned pods are drained in Slurm before they
+// are deleted.
+func splitOldPods(
+	nodeset *slinkyv1beta1.NodeSet,
+	pods []*corev1.Pod,
+	hash string,
+) (replacePods, updatePods, keepPods []*corev1.Pod) {
+	newPods, oldPods := findUpdatedPods(pods, hash)
+	unhealthyOldPods, healthyOldPods := nodesetutils.SplitUnhealthyPods(oldPods)
+
+	total := int(ptr.Deref(nodeset.Spec.Replicas, defaults.DefaultNodeSetReplicas))
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeDaemonset {
+		total = len(pods)
+	}
+
+	// Replica slots with no live pod at either revision (e.g. a
+	// terminating pod awaiting its replacement) are unavailable capacity.
+	// In daemonset mode the node set is not bounded by Replicas, so
+	// remnants on removed nodes must not consume the budget.
+	var numUnavailable int
+	if nodeset.Spec.ScalingMode != slinkyv1beta1.ScalingModeDaemonset {
+		numUnavailable = mathutils.Clamp(total-len(newPods)-len(oldPods), 0, total)
+	}
+	now := metav1.Now()
+	for _, pod := range newPods {
+		if !podutil.IsPodAvailable(pod, nodeset.Spec.MinReadySeconds, now) {
+			numUnavailable++
+		}
+	}
+
+	maxUnavailable := mathutils.GetScaledValueFromIntOrPercent(nodeset.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable, total, true, 1)
+	allowedReplacements := max(mathutils.Clamp(maxUnavailable-numUnavailable, 0, maxUnavailable), 1)
+	remainingUnavailable := mathutils.Clamp(maxUnavailable-numUnavailable-len(unhealthyOldPods), 0, maxUnavailable)
+
+	replacePods, remainingUnhealthyPods := nodesetutils.SplitActivePods(unhealthyOldPods, allowedReplacements)
+	updatePods, remainingHealthyPods := nodesetutils.SplitActivePods(healthyOldPods, remainingUnavailable)
+
+	keepPods = make([]*corev1.Pod, 0, len(remainingUnhealthyPods)+len(remainingHealthyPods))
+	keepPods = append(keepPods, remainingUnhealthyPods...)
+	keepPods = append(keepPods, remainingHealthyPods...)
+
+	return replacePods, updatePods, keepPods
 }
 
 // findUpdatedPods looks at non-deleted pods and returns two lists, new and old pods, given the hash.
@@ -1811,20 +1842,6 @@ func (r *NodeSetReconciler) syncScheduledUpdate(
 	hash string,
 ) error {
 	logger := log.FromContext(ctx)
-
-	_, oldPods := findUpdatedPods(pods, hash)
-
-	// Replace all unhealthy pods
-	unhealthyPods, _ := nodesetutils.SplitUnhealthyPods(oldPods)
-	if len(unhealthyPods) > 0 {
-		logger.Info("Delete unhealthy pods for Scheduled Update",
-			"unhealthyPods", len(unhealthyPods))
-		r.eventRecorder.Eventf(nodeset, nil, corev1.EventTypeNormal, "Scheduled Update", "ScheduledUpdate",
-			"Scheduled update: deleting %d unhealthy old pod(s)", len(unhealthyPods))
-		if err := r.doPodScale(ctx, nodeset, nil, unhealthyPods, nil); err != nil {
-			return err
-		}
-	}
 
 	// If reservation is ongoing, handle updates
 	podsToDelete, _ := r.splitUpdatePods(ctx, nodeset, pods, hash)

@@ -3139,7 +3139,9 @@ func TestNodeSetReconciler_syncRollingUpdate(t *testing.T) {
 					pods:    []*corev1.Pod{pod1, pod2},
 					hash:    hash,
 				},
-				wantErr: false,
+				wantErr:         false,
+				wantNotCordoned: []*corev1.Pod{pod1},
+				wantDeleted:     []*corev1.Pod{pod2},
 			}
 		}(),
 		func() testCaseFields {
@@ -3238,7 +3240,7 @@ func TestNodeSetReconciler_syncRollingUpdate(t *testing.T) {
 			}
 			slurmClient := newFakeClientList(sinterceptor.Funcs{}, slurmNodeList)
 			return testCaseFields{
-				name: "unhealthy old pod does not consume the budget",
+				name: "unhealthy old pod consumes the budget",
 				fields: fields{
 					Client:    k8sclient,
 					ClientMap: newClientMap(controller.Name, slurmClient),
@@ -3249,9 +3251,47 @@ func TestNodeSetReconciler_syncRollingUpdate(t *testing.T) {
 					pods:    []*corev1.Pod{pod1, pod2, pod3},
 					hash:    hash,
 				},
-				wantErr:      false,
-				wantCordoned: []*corev1.Pod{pod3},
-				wantDeleted:  []*corev1.Pod{pod2},
+				wantErr:         false,
+				wantNotCordoned: []*corev1.Pod{pod3},
+				wantDeleted:     []*corev1.Pod{pod2},
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 3)
+			nodeset.Spec.UpdateStrategy.Type = slinkyv1beta1.RollingUpdateNodeSetStrategyType
+			nodeset.Spec.UpdateStrategy.RollingUpdate = slinkyv1beta1.RollingUpdateNodeSetStrategy{
+				MaxUnavailable: ptr.To(intstr.FromInt32(1)),
+			}
+			pod1 := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
+			makePodRunningNotReady(pod1)
+			pod2 := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 1, "")
+			makePodRunningNotReady(pod2)
+			pod3 := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 2, "")
+			makePodRunningNotReady(pod3)
+			k8sclient := fake.NewFakeClient(nodeset, pod1, pod2, pod3)
+			slurmNodeList := &slurmtypes.V0044NodeList{
+				Items: []slurmtypes.V0044Node{
+					*newNodeSetPodSlurmNode(pod1),
+					*newNodeSetPodSlurmNode(pod2),
+					*newNodeSetPodSlurmNode(pod3),
+				},
+			}
+			slurmClient := newFakeClientList(sinterceptor.Funcs{}, slurmNodeList)
+			return testCaseFields{
+				name: "not every unhealthy old pod is condemned at once",
+				fields: fields{
+					Client:    k8sclient,
+					ClientMap: newClientMap(controller.Name, slurmClient),
+				},
+				args: args{
+					ctx:     context.TODO(),
+					nodeset: nodeset,
+					pods:    []*corev1.Pod{pod1, pod2, pod3},
+					hash:    hash,
+				},
+				wantErr:         false,
+				wantCordoned:    []*corev1.Pod{pod3},
+				wantNotCordoned: []*corev1.Pod{pod1, pod2},
 			}
 		}(),
 	}
@@ -3505,8 +3545,32 @@ func TestNodeSetReconciler_splitUpdatePods(t *testing.T) {
 	}
 	now := metav1.Now()
 	const hash = "12345"
+	newRevisionPod := func(name, revision string, ready bool) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+				Labels: map[string]string{
+					history.ControllerRevisionHashLabel: revision,
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			},
+		}
+		if ready {
+			pod.Status.Conditions = []corev1.PodCondition{
+				{
+					Type:               corev1.PodReady,
+					Status:             corev1.ConditionTrue,
+					LastTransitionTime: now,
+				},
+			}
+		}
+		return pod
+	}
 	type fields struct {
-		Client client.Client
+		Client    client.Client
+		ClientMap *clientmap.ClientMap
 	}
 	type args struct {
 		ctx     context.Context
@@ -3811,10 +3875,108 @@ func TestNodeSetReconciler_splitUpdatePods(t *testing.T) {
 			wantPodsToDelete: []string{"pod-3"},
 			wantPodsToKeep:   []string{"pod-0", "pod-1", "pod-2"},
 		},
+		{
+			name: "RollingUpdate replaces unhealthy old pods within the budget",
+			fields: fields{
+				Client: fake.NewFakeClient(),
+			},
+			args: args{
+				ctx: context.TODO(),
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := newNodeSet("foo", controller.Name, 4)
+					nodeset.Spec.UpdateStrategy.Type = slinkyv1beta1.RollingUpdateNodeSetStrategyType
+					nodeset.Spec.UpdateStrategy.RollingUpdate = slinkyv1beta1.RollingUpdateNodeSetStrategy{
+						MaxUnavailable: ptr.To(intstr.FromInt32(1)),
+					}
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					newRevisionPod("pod-0", "", false),
+					newRevisionPod("pod-1", "", false),
+					newRevisionPod("pod-2", "", true),
+					newRevisionPod("pod-3", "", true),
+				},
+				hash: hash,
+			},
+			wantPodsToDelete: []string{"pod-1"},
+			wantPodsToKeep:   []string{"pod-0", "pod-2", "pod-3"},
+		},
+		{
+			name: "RollingUpdate unhealthy old pod consumes the budget",
+			fields: fields{
+				Client: fake.NewFakeClient(),
+			},
+			args: args{
+				ctx: context.TODO(),
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := newNodeSet("foo", controller.Name, 3)
+					nodeset.Spec.UpdateStrategy.Type = slinkyv1beta1.RollingUpdateNodeSetStrategyType
+					nodeset.Spec.UpdateStrategy.RollingUpdate = slinkyv1beta1.RollingUpdateNodeSetStrategy{
+						MaxUnavailable: ptr.To(intstr.FromInt32(2)),
+					}
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					newRevisionPod("pod-0", "", false),
+					newRevisionPod("pod-1", "", true),
+					newRevisionPod("pod-2", "", true),
+				},
+				hash: hash,
+			},
+			wantPodsToDelete: []string{"pod-0", "pod-2"},
+			wantPodsToKeep:   []string{"pod-1"},
+		},
+		{
+			name: "RollingUpdate replaces an unhealthy old pod with the budget spent",
+			fields: fields{
+				Client: fake.NewFakeClient(),
+			},
+			args: args{
+				ctx: context.TODO(),
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := newNodeSet("foo", controller.Name, 2)
+					nodeset.Spec.UpdateStrategy.Type = slinkyv1beta1.RollingUpdateNodeSetStrategyType
+					nodeset.Spec.UpdateStrategy.RollingUpdate = slinkyv1beta1.RollingUpdateNodeSetStrategy{
+						MaxUnavailable: ptr.To(intstr.FromInt32(1)),
+					}
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					newRevisionPod("pod-0", hash, false),
+					newRevisionPod("pod-1", "", false),
+				},
+				hash: hash,
+			},
+			wantPodsToDelete: []string{"pod-1"},
+			wantPodsToKeep:   []string{"pod-0"},
+		},
+		{
+			name: "ScheduledUpdate replaces unhealthy old pods without a Slurm client",
+			fields: fields{
+				Client:    fake.NewFakeClient(),
+				ClientMap: clientmap.NewClientMap(),
+			},
+			args: args{
+				ctx: context.TODO(),
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := newNodeSet("foo", controller.Name, 3)
+					nodeset.Spec.UpdateStrategy.Type = slinkyv1beta1.ScheduledUpdateNodeSetStrategyType
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					newRevisionPod("pod-0", "", false),
+					newRevisionPod("pod-1", "", false),
+					newRevisionPod("pod-2", "", true),
+				},
+				hash: hash,
+			},
+			wantPodsToDelete: []string{"pod-1"},
+			wantPodsToKeep:   []string{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newNodeSetController(tt.fields.Client, nil)
+			r := newNodeSetController(tt.fields.Client, tt.fields.ClientMap)
 			gotPodsToDelete, gotPodsToKeep := r.splitUpdatePods(tt.args.ctx, tt.args.nodeset, tt.args.pods, tt.args.hash)
 
 			gotPodsToDeleteOrdered := make([]string, len(gotPodsToDelete))
