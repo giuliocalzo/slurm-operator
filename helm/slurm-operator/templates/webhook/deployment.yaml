@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 */}}
 
 {{- include "slurm-operator.webhook.validateModes" . -}}
-{{- if .Values.webhook.enabled }}
+{{- if include "slurm-operator.webhook.serverEnabled" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -113,4 +113,4 @@ spec:
           secret:
             defaultMode: 420
             secretName: {{ include "slurm-operator.webhook.tlsSecretName" . }}
-{{- end }}{{- /* if .Values.webhook.enabled */}}
+{{- end }}{{- /* if include "slurm-operator.webhook.serverEnabled" . */}}

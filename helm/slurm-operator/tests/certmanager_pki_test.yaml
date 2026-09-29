@@ -19,6 +19,15 @@ tests:
       - hasDocuments:
           count: 0
 
+  - it: should not render when admissionPolicies is enabled
+    set:
+      webhook:
+        admissionPolicies: true
+      certManager:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
   - it: should not render when certManager is disabled
     set:
       webhook:

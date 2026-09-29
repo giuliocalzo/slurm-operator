@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 */}}
 
 {{- $operatorMetricsSecure := and .Values.operator.enabled .Values.operator.metricsSecure }}
-{{- $webhookMetricsSecure := and .Values.webhook.enabled .Values.webhook.metricsSecure }}
+{{- $webhookMetricsSecure := and (include "slurm-operator.webhook.serverEnabled" .) .Values.webhook.metricsSecure }}
 {{- if or $operatorMetricsSecure $webhookMetricsSecure }}
 {{- /*
 ClusterRole to allow scraping the secured metrics endpoints. It is

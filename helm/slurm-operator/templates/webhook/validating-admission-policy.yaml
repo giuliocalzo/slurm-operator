@@ -1,0 +1,290 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- include "slurm-operator.webhook.validatePolicies" . }}
+{{- if include "slurm-operator.webhook.policiesEnabled" . }}
+{{- $jwtRefImmutable := dict
+  "expression" "oldObject == null || object.spec.?jwtKeyRef.or(object.spec.?jwtHs256KeyRef) == oldObject.spec.?jwtKeyRef.or(oldObject.spec.?jwtHs256KeyRef)"
+  "message" "the value of JwtKeyRef or JwtHs256KeyRef cannot be modified after deployment"
+-}}
+# Accounting: once created, the JWT key reference (jwtKeyRef, or
+# jwtHs256KeyRef when jwtKeyRef is unset) cannot change. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "accounting") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "accountings")) | nindent 2 }}
+  validations:
+    - {{- toYaml $jwtRefImmutable | nindent 6 }}
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "accounting" "action" "Deny") }}
+---
+# Controller: on create, the Slurm ClusterName (spec.clusterName, or
+# <namespace>_<name> when unset) must be at most 40 characters. Once created,
+# the ClusterName, slurmKeyRef, JWT key reference and persistence.enabled
+# cannot change, nor can persistence.existingClaim while persistence is
+# enabled. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "controller") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "controllers")) | nindent 2 }}
+  variables:
+    # Mirrors Controller.ClusterName().
+    - name: clusterName
+      expression: >-
+        object.spec.?clusterName.orValue('') != '' ? object.spec.clusterName
+        : request.namespace + '_' + object.metadata.name
+    - name: oldClusterName
+      expression: >-
+        oldObject.spec.?clusterName.orValue('') != '' ? oldObject.spec.clusterName
+        : oldObject.metadata.namespace + '_' + oldObject.metadata.name
+  validations:
+    # https://slurm.schedmd.com/slurm.conf.html#OPT_ClusterName
+    - expression: "oldObject != null || variables.clusterName.size() <= 40"
+      messageExpression: >-
+        'ClusterName exceeds 40 characters (' + string(variables.clusterName.size()) + '): ' + variables.clusterName
+    - expression: "oldObject == null || variables.clusterName == variables.oldClusterName"
+      message: cannot change ClusterName after deployment
+    - expression: >-
+        oldObject == null ||
+        object.spec.?slurmKeyRef.?name.orValue('') == oldObject.spec.?slurmKeyRef.?name.orValue('')
+      message: cannot change SlurmKeyRef after deployment
+    - {{- toYaml $jwtRefImmutable | nindent 6 }}
+    # The controller savestate PVC is a StatefulSet volumeClaimTemplate, which
+    # cannot be updated.
+    - expression: "oldObject == null || object.spec.?persistence.?enabled == oldObject.spec.?persistence.?enabled"
+      message: cannot change persistence.enabled after deployment
+    - expression: >-
+        oldObject == null || !object.spec.?persistence.?enabled.orValue(true) ||
+        object.spec.?persistence.?existingClaim.orValue('') == oldObject.spec.?persistence.?existingClaim.orValue('')
+      message: cannot change persistence.existingClaim after deployment
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "controller" "action" "Deny") }}
+---
+# Controller reserved config files: denies a Controller whose
+# spec.configFileRefs names a ConfigMap holding slurm.conf or slurmdbd.conf,
+# which slurm-operator generates itself. Evaluated once per ConfigMap in the
+# Controller's namespace (the policy params); only the ConfigMaps listed in
+# spec.configFileRefs are inspected, and a missing one is not rejected.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "controller-config-files") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "controllers")) | nindent 2 }}
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  variables:
+    # An explicit `configFileRefs: null` yields a present optional holding null.
+    - name: configFileRefs
+      expression: "object.spec.?configFileRefs.orValue([])"
+    - name: reservedFiles
+      expression: >-
+        type(variables.configFileRefs) != null_type &&
+        params.metadata.name in variables.configFileRefs.map(r, r.?name.orValue(''))
+        ? params.?data.orValue({}).filter(f, f in ['slurm.conf', 'slurmdbd.conf'])
+        : []
+  validations:
+    - expression: "variables.reservedFiles.size() == 0"
+      messageExpression: "'the configFile is reserved for slurm-operator use: ' + variables.reservedFiles.join(', ')"
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "controller-config-files" "action" "Deny" "params" true) }}
+---
+# Controller unknown config files: warns, without rejecting, when a ConfigMap
+# named in spec.configFileRefs holds a file that is not a Slurm configuration
+# file, which Slurm ignores unless another config file includes it. Evaluated
+# per ConfigMap like the reserved config files policy.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "controller-config-files-warn") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "controllers")) | nindent 2 }}
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  variables:
+    # An explicit `configFileRefs: null` yields a present optional holding null.
+    - name: configFileRefs
+      expression: "object.spec.?configFileRefs.orValue([])"
+    # Ref: https://slurm.schedmd.com/man_index.html#configuration_files
+    - name: unknownFiles
+      expression: >-
+        type(variables.configFileRefs) != null_type &&
+        params.metadata.name in variables.configFileRefs.map(r, r.?name.orValue(''))
+        ? params.?data.orValue({}).filter(f, !(f in [
+            'slurm.conf', 'slurmdbd.conf',
+            'acct_gather.conf', 'burst_buffer.conf', 'cgroup.conf', 'cli_filter.lua',
+            'gres.conf', 'helpers.conf', 'job_container.conf', 'job_submit.lua',
+            'mpi.conf', 'namespace.yaml', 'oci.conf', 'plugstack.conf',
+            'topology.conf', 'topology.yaml']))
+        : []
+  validations:
+    - expression: "variables.unknownFiles.size() == 0"
+      messageExpression: >-
+        'the configFile is unknown to Slurm, make sure to include it in another config file otherwise it is ignored: '
+        + variables.unknownFiles.join(', ')
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "controller-config-files-warn" "action" "Warn" "params" true) }}
+---
+# Controller HA claim: with spec.ha.enabled, the PersistentVolumeClaim named by
+# spec.persistence.existingClaim must have the ReadWriteMany access mode.
+# Evaluated once per PersistentVolumeClaim in the Controller's namespace (the
+# policy params); only the named claim is inspected, and a missing one is not
+# rejected. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "controller-ha-pvc") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "controllers")) | nindent 2 }}
+  paramKind:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+  validations:
+    - expression: >-
+        !object.spec.?ha.?enabled.orValue(false) ||
+        params.metadata.name != object.spec.?persistence.?existingClaim.orValue('') ||
+        'ReadWriteMany' in params.spec.?accessModes.orValue([])
+      messageExpression: >-
+        'slurm high availability (HA) mode requires given PVC (' + params.metadata.namespace + '/' + params.metadata.name
+        + ') to have access mode \'ReadWriteMany\''
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "controller-ha-pvc" "action" "Deny" "params" true) }}
+---
+# LoginSet: controllerRef.name and sssdConfRef.name must be set, and
+# controllerRef cannot change once created. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "loginset") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "loginsets")) | nindent 2 }}
+  validations:
+    - expression: "object.spec.?controllerRef.?name.orValue('') != ''"
+      message: controllerRef.name must not be empty
+    - expression: "object.spec.?sssdConfRef.?name.orValue('') != ''"
+      message: sssdConfRef.name must not be empty
+    - expression: "oldObject == null || object.spec.?controllerRef == oldObject.spec.?controllerRef"
+      message: cannot change controllerRef after deployment
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "loginset" "action" "Deny") }}
+---
+# NodeSet: controllerRef.name must be set; the update strategy's
+# rollingUpdate.maxUnavailable must be at least 1 and not "0%", and a non-zero
+# scheduledUpdate.duration must be at least one minute; ssh.enabled requires
+# ssh.sssdConfRef.name; template.spec.hostname must be a valid DNS subdomain
+# prefix (a trailing dash is allowed); and every extraConf item must be
+# Key=Value. Once created, controllerRef and volumeClaimTemplates cannot
+# change. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "nodeset") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "nodesets")) | nindent 2 }}
+  variables:
+    - name: maxUnavailable
+      expression: "object.spec.?updateStrategy.?rollingUpdate.?maxUnavailable"
+    - name: scheduledDuration
+      expression: "object.spec.?updateStrategy.?scheduledUpdate.?duration.orValue('0s')"
+    # Mirrors apivalidation.NameIsDNSSubdomain(hostname, true), which masks a
+    # trailing dash before validating.
+    - name: hostname
+      expression: >-
+        object.spec.?template.?spec.?hostname.orValue('').size() > 1 && object.spec.template.spec.hostname.endsWith('-')
+        ? object.spec.template.spec.hostname.substring(0, object.spec.template.spec.hostname.size() - 2) + 'a'
+        : object.spec.?template.?spec.?hostname.orValue('')
+    # Mirrors workerbuilder.ParseExtraConf: every whitespace-separated item must be Key=Value.
+    - name: malformedExtraConf
+      expression: "object.spec.?extraConf.orValue('').findAll('\\\\S+').filter(i, !i.contains('='))"
+  validations:
+    - expression: "object.spec.?controllerRef.?name.orValue('') != ''"
+      message: controllerRef.name must not be empty
+    - expression: >-
+        !variables.maxUnavailable.hasValue() || type(variables.maxUnavailable.value()) != int ||
+        variables.maxUnavailable.value() >= 1
+      messageExpression: "'maxUnavailable must be > 0, got ' + string(int(variables.maxUnavailable.value()))"
+    - expression: >-
+        !variables.maxUnavailable.hasValue() || type(variables.maxUnavailable.value()) != string ||
+        variables.maxUnavailable.value() != '0%'
+      message: maxUnavailable must not be 0%
+    - expression: >-
+        duration(variables.scheduledDuration) == duration('0s') ||
+        duration(variables.scheduledDuration) >= duration('1m')
+      message: UpdateStrategy.ScheduledUpdate.Duration must be at least 1 minute
+    - expression: >-
+        !object.spec.?ssh.?enabled.orValue(false) || object.spec.?ssh.?sssdConfRef.?name.orValue('') != ''
+      message: ssh.sssdConfRef.name must not be empty when ssh is enabled
+    - expression: "variables.hostname == '' || !format.dns1123Subdomain().validate(variables.hostname).hasValue()"
+      messageExpression: "'template.spec.hostname: ' + format.dns1123Subdomain().validate(variables.hostname).value().join('; ')"
+    - expression: "variables.malformedExtraConf.size() == 0"
+      messageExpression: >-
+        'invalid extraConf: malformed --conf item "' + variables.malformedExtraConf[0] + '": expected Key=Value'
+    - expression: "oldObject == null || object.spec.?controllerRef == oldObject.spec.?controllerRef"
+      message: cannot change controllerRef after deployment
+    - expression: >-
+        oldObject == null ||
+        object.spec.?volumeClaimTemplates.orValue([]) == oldObject.spec.?volumeClaimTemplates.orValue([])
+      message: cannot change volumeClaimTemplates after deployment
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "nodeset" "action" "Deny") }}
+---
+# Token: once created, the JWT key reference (jwtKeyRef, or jwtHs256KeyRef when
+# jwtKeyRef is unset) cannot change. Violations are denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "token") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "tokens")) | nindent 2 }}
+  validations:
+    - {{- toYaml $jwtRefImmutable | nindent 6 }}
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "token" "action" "Deny") }}
+---
+# Service externalIPs: warns, without rejecting, when an Accounting,
+# Controller, LoginSet or RestApi sets service.spec.externalIPs, which lets a
+# Service intercept traffic to arbitrary IPs (MitM via CVE-2020-8554).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "slurm-operator.webhook.policyName" (dict "root" . "name" "external-ips") }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  {{- include "slurm-operator.webhook.validatingPolicySpec" (dict "root" . "resources" (list "accountings" "controllers" "loginsets" "restapis")) | nindent 2 }}
+  validations:
+    - expression: "!object.spec.?service.?spec.?externalIPs.hasValue()"
+      messageExpression: >-
+        'ExternalIPs may not be set for ' + {
+          'accountings': 'accounting service',
+          'controllers': 'controller service',
+          'loginsets': 'loginset service',
+          'restapis': 'restapi services'
+        }[request.resource.resource]
+---
+{{ include "slurm-operator.webhook.validatingPolicyBinding" (dict "root" . "name" "external-ips" "action" "Warn") }}
+{{- end }}{{- /* if include "slurm-operator.webhook.policiesEnabled" . */}}

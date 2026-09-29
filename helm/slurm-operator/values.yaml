@@ -139,6 +139,14 @@ webhook:
   enabled: true
   # -- Enable the pods/binding webhook.
   podsBinding: false
+  # -- Enforce admission with ValidatingAdmissionPolicies and a
+  # MutatingAdmissionPolicy, evaluated by the kube-apiserver, instead of the
+  # webhook server. When true, the webhook Deployment, Service, RBAC, TLS
+  # Secret, and cert-manager objects are not deployed; `podsBinding`,
+  # `namespaces`, `validating`, and `mutating` still apply. Requires Kubernetes
+  # 1.36+.
+  # Ref: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/
+  admissionPolicies: false
   # -- Set the number of replicas to deploy.
   replicas: 1
   # -- Set the image pull policy.
