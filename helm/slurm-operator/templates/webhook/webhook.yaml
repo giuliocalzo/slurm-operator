@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 */}}
 
 {{- include "slurm-operator.webhook.validateModes" . -}}
-{{- if .Values.webhook.enabled }}
+{{- if include "slurm-operator.webhook.serverEnabled" . }}
 {{- $certNamespacedName := printf "%s/%s" (include "slurm-operator.namespace" .) .Values.certManager.secretName -}}
 {{- $caBundle := "" -}}
 {{- if .Values.externalCertInjection.enabled -}}
@@ -311,4 +311,4 @@ webhooks:
     {{- end }}{{- /* with .Values.webhook.timeoutSeconds */}}
     sideEffects: NoneOnDryRun
 {{- end }}{{- /* if .Values.webhook.podsBinding */}}
-{{- end }}{{- /* if .Values.webhook.enabled */}}
+{{- end }}{{- /* if include "slurm-operator.webhook.serverEnabled" . */}}

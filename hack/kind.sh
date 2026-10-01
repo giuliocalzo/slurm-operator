@@ -135,12 +135,54 @@ function slurm-operator::prerequisites() {
 }
 
 function slurm-operator::install() {
-	slurm-operator::prerequisites
+	local profile=""
+	if $OPT_ADMISSION_POLICIES; then
+		profile="admission-policies"
+	else
+		slurm-operator::prerequisites
+	fi
 	(
 		cd "$ROOT_DIR"/helm/slurm-operator
-		skaffold run
+		skaffold run ${profile:+--profile="$profile"}
 	)
-	slurm-operator::wait_webhook
+	if $OPT_ADMISSION_POLICIES; then
+		slurm-operator::wait_policies
+	else
+		slurm-operator::wait_webhook
+	fi
+}
+
+function slurm-operator::wait_policies() {
+	# The kube-apiserver enforces a policy only after its informers load it, so
+	# poll with a LoginSet that only the admission policies reject.
+	echo "[slurm] Waiting for slurm-operator admission policies..."
+	local deadline=$((SECONDS + 120))
+	local output=""
+	while ((SECONDS < deadline)); do
+		if ! output="$(
+			kubectl create --dry-run=server --namespace=slinky \
+				--request-timeout=10s -f - 2>&1 <<-EOF
+					apiVersion: slinky.slurm.net/v1beta1
+					kind: LoginSet
+					metadata:
+					  generateName: slurm-operator-policy-check-
+					spec:
+					  controllerRef:
+					    name: ""
+					  sssdConfRef:
+					    name: slurm-operator-policy-check
+					    key: sssd.conf
+				EOF
+		)" && grep -Fq 'controllerRef.name must not be empty' <<<"$output"; then
+			echo "[slurm] Slurm-operator admission policies are enforced."
+			return 0
+		fi
+		sleep 2
+	done
+
+	echo "[slurm] Timed out waiting for slurm-operator admission policies after 120s." >&2
+	printf '%s\n' "$output" >&2
+	return 1
 }
 
 function slurm-operator::wait_webhook() {
@@ -288,7 +330,7 @@ $(basename "$0") - Manage a kind cluster for local testing/development
 	        [--recreate|--delete]
 	        [--core|--prereqs][--extras][--mariadb][--keda][--metrics]
 	        [--nfs][--ldap][--all] [--registry=REPO]
-	        [--crds][--operator][--slurm]
+	        [--crds][--operator][--slurm] [--admission-policies]
 	        [-h|--help] [KIND_CLUSTER_NAME]
 
 KIND OPTIONS:
@@ -311,6 +353,9 @@ HELM OPTIONS:
 	--prereqs           Install operator prerequisites only (cert-manager).
 	--crds              Install the operator CRDs chart.
 	--operator          Install the operator chart.
+	--admission-policies
+	                    Install the operator chart with admission policies instead of
+	                    the webhook server, skipping cert-manager. Requires Kubernetes 1.36+.
 	--slurm             Install the slurm chart.
 
 HELP OPTIONS:
@@ -327,6 +372,10 @@ function main::validate_options() {
 	fi
 	if $OPT_CORE && $OPT_PREREQS; then
 		echo "--core and --prereqs cannot be used together." >&2
+		exit 1
+	fi
+	if $OPT_ADMISSION_POLICIES && ! $OPT_OPERATOR; then
+		echo "--admission-policies requires --operator, --core, or --all." >&2
 		exit 1
 	fi
 }
@@ -349,6 +398,7 @@ OPT_PREREQS=false
 OPT_REGISTRY="${SKAFFOLD_DEFAULT_REPO:-}"
 OPT_OPERATOR_CRDS=false
 OPT_OPERATOR=false
+OPT_ADMISSION_POLICIES=false
 OPT_SLURM=false
 OPT_EXTRAS=false
 OPT_MARIADB=false
@@ -358,7 +408,7 @@ OPT_LDAP=false
 OPT_METRICS=false
 
 SHORT="+h"
-LONG="debug,config:,recreate,delete,existing-cluster,registry:,crds,operator,slurm,all,extras,mariadb,keda,metrics,nfs,ldap,core,prereqs,help"
+LONG="debug,config:,recreate,delete,existing-cluster,registry:,crds,operator,admission-policies,slurm,all,extras,mariadb,keda,metrics,nfs,ldap,core,prereqs,help"
 OPTS="$(getopt -a --options "$SHORT" --longoptions "$LONG" -- "$@")"
 eval set -- "${OPTS}"
 while :; do
@@ -398,6 +448,10 @@ while :; do
 		;;
 	--operator)
 		OPT_OPERATOR=true
+		shift
+		;;
+	--admission-policies)
+		OPT_ADMISSION_POLICIES=true
 		shift
 		;;
 	--slurm)

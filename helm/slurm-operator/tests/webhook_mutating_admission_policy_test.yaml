@@ -1,0 +1,22 @@
+---
+suite: test webhook mutating admission policy
+templates:
+  - webhook/mutating-admission-policy.yaml
+chart:
+  version: 1.2.3
+  appVersion: 1.2.3
+release:
+  name: test-release
+  namespace: test-namespace
+tests:
+  - it: should fail on Kubernetes older than 1.36
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "35"
+    set:
+      webhook:
+        admissionPolicies: true
+        podsBinding: true
+    asserts:
+      - failedTemplate:
+          errorMessage: webhook.admissionPolicies=true requires Kubernetes 1.36 or later, got v1.35.0

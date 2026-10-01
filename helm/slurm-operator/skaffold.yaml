@@ -59,3 +59,9 @@ profiles:
         value:
           operator.leaderElection: false
           webhook.leaderElection: false
+  - name: admission-policies
+    patches:
+      - op: add
+        path: /deploy/helm/releases/0/setValues
+        value:
+          webhook.admissionPolicies: true

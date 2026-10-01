@@ -12,6 +12,7 @@
     - [With CRDs As Subchart](#with-crds-as-subchart)
     - [Without cert-manager](#without-cert-manager)
     - [With an Externally-Managed Webhook Certificate](#with-an-externally-managed-webhook-certificate)
+    - [With Admission Policies Instead of the Webhook](#with-admission-policies-instead-of-the-webhook)
   - [Slurm Cluster](#slurm-cluster)
     - [Controller Persistence](#controller-persistence)
     - [With Accounting](#with-accounting)
@@ -211,6 +212,34 @@ cainjector keeps `caBundle` correct without a `helm upgrade`.
 > the webhook pod serves a chart-generated certificate whose CA your PKI Secret
 > does not match — the user's PKI is silently ignored regardless of the
 > cainjector annotation.
+
+### With Admission Policies Instead of the Webhook
+
+On Kubernetes 1.36 or later, the chart can enforce the webhook's checks with
+[ValidatingAdmissionPolicies][validating-admission-policy] and a
+[MutatingAdmissionPolicy][mutating-admission-policy], which the kube-apiserver
+evaluates itself. The webhook Deployment, its Service, RBAC, and serving
+certificate are not deployed, so cert-manager is not needed.
+
+```sh
+helm install slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
+  --set 'webhook.admissionPolicies=true' \
+  --namespace=slinky --create-namespace
+```
+
+`webhook.podsBinding`, `webhook.namespaces`, and the `webhook.validating` and
+`webhook.mutating` settings apply to the policies as they do to the webhook.
+Rejections and warnings carry the same messages, with these differences:
+
+- A rejected request reports only the first check it fails, not all of them.
+- The Controller checks read the ConfigMaps in `configFileRefs` and the high
+  availability PersistentVolumeClaim as policy parameters, so the kube-apiserver
+  caches every ConfigMap and PersistentVolumeClaim in the cluster. A
+  `configFileRefs` entry naming a ConfigMap that does not exist is not rejected.
+- The pods/binding policy cannot read the Pod being bound, so it copies the
+  `topology.slinky.slurm.net/spec` Node annotation onto every Pod bound in its
+  namespaces, not only onto NodeSet Pods. It reads the annotation from Nodes
+  cached as policy parameters.
 
 ## Slurm Cluster
 
@@ -660,6 +689,7 @@ crw-rw-rw- 1 root root 509, 1 Apr 20 17:08 /dev/nvidia-caps-imex-channels/channe
 [grestypes]: https://slurm.schedmd.com/slurm.conf.html#OPT_GresTypes
 [imex]: https://docs.nvidia.com/multi-node-nvlink-systems/imex-guide/overview.html
 [mariadb-operator]: https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/helm.md
+[mutating-admission-policy]: https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/
 [mysql-operator]: https://dev.mysql.com/doc/mysql-operator/en/mysql-operator-installation-helm.html
 [nvidia-gpu-operator]: https://github.com/NVIDIA/gpu-operator
 [persistent-volume]: https://kubernetes.io/docs/concepts/storage/persistent-volumes/
@@ -668,3 +698,4 @@ crw-rw-rw- 1 root root 509, 1 Apr 20 17:08 /dev/nvidia-caps-imex-channels/channe
 [sssd]: https://sssd.io/
 [statesavelocation]: https://slurm.schedmd.com/slurm.conf.html#OPT_StateSaveLocation
 [switchtype]: https://slurm.schedmd.com/slurm.conf.html#OPT_SwitchType
+[validating-admission-policy]: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/

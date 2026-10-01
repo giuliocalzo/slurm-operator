@@ -2,6 +2,7 @@
 SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
 SPDX-License-Identifier: Apache-2.0
 */}}
+{{- if include "slurm-operator.webhook.serverEnabled" . }}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -23,3 +24,4 @@ spec:
       wget -q -O- http://{{ include "slurm-operator.webhook.name" . }}.{{ include "slurm-operator.namespace" . }}:8081/healthz | grep ok
       wget -q -O- http://{{ include "slurm-operator.webhook.name" . }}.{{ include "slurm-operator.namespace" . }}:8081/readyz | grep ok
   restartPolicy: Never
+{{- end }}{{- /* if include "slurm-operator.webhook.serverEnabled" . */}}

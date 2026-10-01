@@ -1,0 +1,654 @@
+pods/binding policy should match snapshot:
+  1: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: MutatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-pods-binding
+    spec:
+      failurePolicy: Ignore
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - ""
+            apiVersions:
+              - v1
+            operations:
+              - CREATE
+            resources:
+              - pods/binding
+      mutations:
+        - applyConfiguration:
+            expression: |-
+              variables.topologySpec.hasValue() ? Object{
+                  metadata: Object.metadata{
+                    annotations: {'topology.slinky.slurm.net/spec': variables.topologySpec.value()}
+                  }
+                }
+              : Object{}
+          patchType: ApplyConfiguration
+      paramKind:
+        apiVersion: v1
+        kind: Node
+      reinvocationPolicy: Never
+      variables:
+        - expression: 'params.metadata.name == object.target.name ? params.metadata.?annotations[?''topology.slinky.slurm.net/spec''] : optional.none()'
+          name: topologySpec
+  2: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: MutatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-pods-binding
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - test-namespace
+      paramRef:
+        parameterNotFoundAction: Allow
+        selector: {}
+      policyName: test-release-slurm-operator-pods-binding
+validating policies should match snapshot:
+  1: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-accounting
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - accountings
+            scope: Namespaced
+      validations:
+        - expression: oldObject == null || object.spec.?jwtKeyRef.or(object.spec.?jwtHs256KeyRef) == oldObject.spec.?jwtKeyRef.or(oldObject.spec.?jwtHs256KeyRef)
+          message: the value of JwtKeyRef or JwtHs256KeyRef cannot be modified after deployment
+  2: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-accounting
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-accounting
+      validationActions:
+        - Deny
+  3: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - controllers
+            scope: Namespaced
+      validations:
+        - expression: oldObject != null || variables.clusterName.size() <= 40
+          messageExpression: '''ClusterName exceeds 40 characters ('' + string(variables.clusterName.size()) + ''): '' + variables.clusterName'
+        - expression: oldObject == null || variables.clusterName == variables.oldClusterName
+          message: cannot change ClusterName after deployment
+        - expression: oldObject == null || object.spec.?slurmKeyRef.?name.orValue('') == oldObject.spec.?slurmKeyRef.?name.orValue('')
+          message: cannot change SlurmKeyRef after deployment
+        - expression: oldObject == null || object.spec.?jwtKeyRef.or(object.spec.?jwtHs256KeyRef) == oldObject.spec.?jwtKeyRef.or(oldObject.spec.?jwtHs256KeyRef)
+          message: the value of JwtKeyRef or JwtHs256KeyRef cannot be modified after deployment
+        - expression: oldObject == null || object.spec.?persistence.?enabled == oldObject.spec.?persistence.?enabled
+          message: cannot change persistence.enabled after deployment
+        - expression: oldObject == null || !object.spec.?persistence.?enabled.orValue(true) || object.spec.?persistence.?existingClaim.orValue('') == oldObject.spec.?persistence.?existingClaim.orValue('')
+          message: cannot change persistence.existingClaim after deployment
+      variables:
+        - expression: 'object.spec.?clusterName.orValue('''') != '''' ? object.spec.clusterName : request.namespace + ''_'' + object.metadata.name'
+          name: clusterName
+        - expression: 'oldObject.spec.?clusterName.orValue('''') != '''' ? oldObject.spec.clusterName : oldObject.metadata.namespace + ''_'' + oldObject.metadata.name'
+          name: oldClusterName
+  4: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-controller
+      validationActions:
+        - Deny
+  5: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-config-files
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - controllers
+            scope: Namespaced
+      paramKind:
+        apiVersion: v1
+        kind: ConfigMap
+      validations:
+        - expression: variables.reservedFiles.size() == 0
+          messageExpression: '''the configFile is reserved for slurm-operator use: '' + variables.reservedFiles.join('', '')'
+      variables:
+        - expression: object.spec.?configFileRefs.orValue([])
+          name: configFileRefs
+        - expression: 'type(variables.configFileRefs) != null_type && params.metadata.name in variables.configFileRefs.map(r, r.?name.orValue('''')) ? params.?data.orValue({}).filter(f, f in [''slurm.conf'', ''slurmdbd.conf'']) : []'
+          name: reservedFiles
+  6: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-config-files
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      paramRef:
+        parameterNotFoundAction: Allow
+        selector: {}
+      policyName: test-release-slurm-operator-controller-config-files
+      validationActions:
+        - Deny
+  7: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-config-files-warn
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - controllers
+            scope: Namespaced
+      paramKind:
+        apiVersion: v1
+        kind: ConfigMap
+      validations:
+        - expression: variables.unknownFiles.size() == 0
+          messageExpression: '''the configFile is unknown to Slurm, make sure to include it in another config file otherwise it is ignored: '' + variables.unknownFiles.join('', '')'
+      variables:
+        - expression: object.spec.?configFileRefs.orValue([])
+          name: configFileRefs
+        - expression: |-
+            type(variables.configFileRefs) != null_type && params.metadata.name in variables.configFileRefs.map(r, r.?name.orValue('')) ? params.?data.orValue({}).filter(f, !(f in [
+                'slurm.conf', 'slurmdbd.conf',
+                'acct_gather.conf', 'burst_buffer.conf', 'cgroup.conf', 'cli_filter.lua',
+                'gres.conf', 'helpers.conf', 'job_container.conf', 'job_submit.lua',
+                'mpi.conf', 'namespace.yaml', 'oci.conf', 'plugstack.conf',
+                'topology.conf', 'topology.yaml']))
+            : []
+          name: unknownFiles
+  8: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-config-files-warn
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      paramRef:
+        parameterNotFoundAction: Allow
+        selector: {}
+      policyName: test-release-slurm-operator-controller-config-files-warn
+      validationActions:
+        - Warn
+  9: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-ha-pvc
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - controllers
+            scope: Namespaced
+      paramKind:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+      validations:
+        - expression: '!object.spec.?ha.?enabled.orValue(false) || params.metadata.name != object.spec.?persistence.?existingClaim.orValue('''') || ''ReadWriteMany'' in params.spec.?accessModes.orValue([])'
+          messageExpression: '''slurm high availability (HA) mode requires given PVC ('' + params.metadata.namespace + ''/'' + params.metadata.name + '') to have access mode \''ReadWriteMany\'''''
+  10: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-controller-ha-pvc
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      paramRef:
+        parameterNotFoundAction: Allow
+        selector: {}
+      policyName: test-release-slurm-operator-controller-ha-pvc
+      validationActions:
+        - Deny
+  11: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-loginset
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - loginsets
+            scope: Namespaced
+      validations:
+        - expression: object.spec.?controllerRef.?name.orValue('') != ''
+          message: controllerRef.name must not be empty
+        - expression: object.spec.?sssdConfRef.?name.orValue('') != ''
+          message: sssdConfRef.name must not be empty
+        - expression: oldObject == null || object.spec.?controllerRef == oldObject.spec.?controllerRef
+          message: cannot change controllerRef after deployment
+  12: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-loginset
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-loginset
+      validationActions:
+        - Deny
+  13: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-nodeset
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - nodesets
+            scope: Namespaced
+      validations:
+        - expression: object.spec.?controllerRef.?name.orValue('') != ''
+          message: controllerRef.name must not be empty
+        - expression: '!variables.maxUnavailable.hasValue() || type(variables.maxUnavailable.value()) != int || variables.maxUnavailable.value() >= 1'
+          messageExpression: '''maxUnavailable must be > 0, got '' + string(int(variables.maxUnavailable.value()))'
+        - expression: '!variables.maxUnavailable.hasValue() || type(variables.maxUnavailable.value()) != string || variables.maxUnavailable.value() != ''0%'''
+          message: maxUnavailable must not be 0%
+        - expression: duration(variables.scheduledDuration) == duration('0s') || duration(variables.scheduledDuration) >= duration('1m')
+          message: UpdateStrategy.ScheduledUpdate.Duration must be at least 1 minute
+        - expression: '!object.spec.?ssh.?enabled.orValue(false) || object.spec.?ssh.?sssdConfRef.?name.orValue('''') != '''''
+          message: ssh.sssdConfRef.name must not be empty when ssh is enabled
+        - expression: variables.hostname == '' || !format.dns1123Subdomain().validate(variables.hostname).hasValue()
+          messageExpression: '''template.spec.hostname: '' + format.dns1123Subdomain().validate(variables.hostname).value().join(''; '')'
+        - expression: variables.malformedExtraConf.size() == 0
+          messageExpression: '''invalid extraConf: malformed --conf item "'' + variables.malformedExtraConf[0] + ''": expected Key=Value'''
+        - expression: oldObject == null || object.spec.?controllerRef == oldObject.spec.?controllerRef
+          message: cannot change controllerRef after deployment
+        - expression: oldObject == null || object.spec.?volumeClaimTemplates.orValue([]) == oldObject.spec.?volumeClaimTemplates.orValue([])
+          message: cannot change volumeClaimTemplates after deployment
+      variables:
+        - expression: object.spec.?updateStrategy.?rollingUpdate.?maxUnavailable
+          name: maxUnavailable
+        - expression: object.spec.?updateStrategy.?scheduledUpdate.?duration.orValue('0s')
+          name: scheduledDuration
+        - expression: 'object.spec.?template.?spec.?hostname.orValue('''').size() > 1 && object.spec.template.spec.hostname.endsWith(''-'') ? object.spec.template.spec.hostname.substring(0, object.spec.template.spec.hostname.size() - 2) + ''a'' : object.spec.?template.?spec.?hostname.orValue('''')'
+          name: hostname
+        - expression: object.spec.?extraConf.orValue('').findAll('\\S+').filter(i, !i.contains('='))
+          name: malformedExtraConf
+  14: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-nodeset
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-nodeset
+      validationActions:
+        - Deny
+  15: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-token
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - tokens
+            scope: Namespaced
+      validations:
+        - expression: oldObject == null || object.spec.?jwtKeyRef.or(object.spec.?jwtHs256KeyRef) == oldObject.spec.?jwtKeyRef.or(oldObject.spec.?jwtHs256KeyRef)
+          message: the value of JwtKeyRef or JwtHs256KeyRef cannot be modified after deployment
+  16: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-token
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-token
+      validationActions:
+        - Deny
+  17: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicy
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-external-ips
+    spec:
+      failurePolicy: Fail
+      matchConstraints:
+        matchPolicy: Equivalent
+        resourceRules:
+          - apiGroups:
+              - slinky.slurm.net
+            apiVersions:
+              - v1beta1
+            operations:
+              - CREATE
+              - UPDATE
+            resources:
+              - accountings
+              - controllers
+              - loginsets
+              - restapis
+            scope: Namespaced
+      validations:
+        - expression: '!object.spec.?service.?spec.?externalIPs.hasValue()'
+          messageExpression: |-
+            'ExternalIPs may not be set for ' + {
+              'accountings': 'accounting service',
+              'controllers': 'controller service',
+              'loginsets': 'loginset service',
+              'restapis': 'restapi services'
+            }[request.resource.resource]
+  18: |
+    apiVersion: admissionregistration.k8s.io/v1
+    kind: ValidatingAdmissionPolicyBinding
+    metadata:
+      labels:
+        app.kubernetes.io/instance: test-release
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: slurm-operator-webhook
+        app.kubernetes.io/part-of: slurm-operator
+        app.kubernetes.io/version: 1.2.3
+        helm.sh/chart: slurm-operator-1.2.3
+      name: test-release-slurm-operator-external-ips
+    spec:
+      matchResources:
+        namespaceSelector:
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      policyName: test-release-slurm-operator-external-ips
+      validationActions:
+        - Warn

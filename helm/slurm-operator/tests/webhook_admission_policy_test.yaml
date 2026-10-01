@@ -1,0 +1,251 @@
+---
+suite: test webhook admission policies
+templates:
+  - webhook/validating-admission-policy.yaml
+  - webhook/mutating-admission-policy.yaml
+chart:
+  version: 1.2.3
+  appVersion: 1.2.3
+release:
+  name: test-release
+  namespace: test-namespace
+capabilities:
+  majorVersion: "1"
+  minorVersion: "36"
+tests:
+  - it: should not render by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: validating policies should fail on Kubernetes older than 1.36
+    template: webhook/validating-admission-policy.yaml
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "35"
+    set:
+      webhook:
+        admissionPolicies: true
+    asserts:
+      - failedTemplate:
+          errorMessage: webhook.admissionPolicies=true requires Kubernetes 1.36 or later, got v1.35.0
+
+  - it: should render on Kubernetes newer than 1.36
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "37"
+    set:
+      webhook:
+        admissionPolicies: true
+        podsBinding: true
+    asserts:
+      - template: webhook/validating-admission-policy.yaml
+        hasDocuments:
+          count: 18
+      - template: webhook/mutating-admission-policy.yaml
+        hasDocuments:
+          count: 2
+
+  - it: should not check the Kubernetes version when admissionPolicies is disabled
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "29"
+    set:
+      webhook:
+        podsBinding: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not check the Kubernetes version when webhook is disabled
+    capabilities:
+      majorVersion: "1"
+      minorVersion: "29"
+    set:
+      webhook:
+        enabled: false
+        admissionPolicies: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not render when webhook is disabled
+    set:
+      webhook:
+        enabled: false
+        admissionPolicies: true
+        podsBinding: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: validating policies should match snapshot
+    template: webhook/validating-admission-policy.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+    asserts:
+      - hasDocuments:
+          count: 18
+      - matchSnapshot: {}
+
+  - it: should not render the pods/binding policy unless podsBinding is set
+    template: webhook/mutating-admission-policy.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: pods/binding policy should match snapshot
+    template: webhook/mutating-admission-policy.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+        podsBinding: true
+    asserts:
+      - hasDocuments:
+          count: 2
+      - matchSnapshot: {}
+
+  - it: should bind warnings with Warn and everything else with Deny
+    template: webhook/validating-admission-policy.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+    asserts:
+      - documentSelector:
+          path: spec.policyName
+          value: test-release-slurm-operator-external-ips
+        equal:
+          path: spec.validationActions
+          value: [Warn]
+      - documentSelector:
+          path: spec.policyName
+          value: test-release-slurm-operator-controller-config-files-warn
+        equal:
+          path: spec.validationActions
+          value: [Warn]
+      - documentSelector:
+          path: spec.policyName
+          value: test-release-slurm-operator-nodeset
+        equal:
+          path: spec.validationActions
+          value: [Deny]
+      - documentSelector:
+          path: spec.policyName
+          value: test-release-slurm-operator-controller-config-files
+        equal:
+          path: spec.paramRef
+          value:
+            selector: {}
+            parameterNotFoundAction: Allow
+
+  - it: should honor validating and mutating failurePolicy, matchPolicy, and matchConditions
+    set:
+      webhook:
+        admissionPolicies: true
+        podsBinding: true
+        validating:
+          failurePolicy: Ignore
+          matchPolicy: Exact
+          matchConditions:
+            - name: skip-dry-run
+              expression: "!request.dryRun"
+        mutating:
+          failurePolicy: Fail
+          matchPolicy: Exact
+    asserts:
+      - template: webhook/validating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: ValidatingAdmissionPolicy
+          matchMany: true
+        equal:
+          path: spec.failurePolicy
+          value: Ignore
+      - template: webhook/validating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: ValidatingAdmissionPolicy
+          matchMany: true
+        equal:
+          path: spec.matchConstraints.matchPolicy
+          value: Exact
+      - template: webhook/validating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: ValidatingAdmissionPolicy
+          matchMany: true
+        equal:
+          path: spec.matchConditions[0].name
+          value: skip-dry-run
+      - template: webhook/mutating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: MutatingAdmissionPolicy
+        equal:
+          path: spec.failurePolicy
+          value: Fail
+      - template: webhook/mutating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: MutatingAdmissionPolicy
+        equal:
+          path: spec.matchConstraints.matchPolicy
+          value: Exact
+
+  - it: should scope bindings to webhook.namespaces
+    values:
+      - ./values/webhook_namespaces.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+        podsBinding: true
+    asserts:
+      - template: webhook/validating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: ValidatingAdmissionPolicyBinding
+          matchMany: true
+        contains:
+          path: spec.matchResources.namespaceSelector.matchExpressions
+          content:
+            key: kubernetes.io/metadata.name
+            operator: In
+            values:
+              - slurm
+              - compute
+      - template: webhook/mutating-admission-policy.yaml
+        documentSelector:
+          path: kind
+          value: MutatingAdmissionPolicyBinding
+        contains:
+          path: spec.matchResources.namespaceSelector.matchExpressions
+          content:
+            key: kubernetes.io/metadata.name
+            operator: NotIn
+            values:
+              - kube-system
+              - kube-public
+              - kube-node-lease
+              - test-namespace
+
+  - it: should render the validating namespaceSelector override verbatim
+    values:
+      - ./values/webhook_namespaceselector.yaml
+    set:
+      webhook:
+        admissionPolicies: true
+    template: webhook/validating-admission-policy.yaml
+    asserts:
+      - documentSelector:
+          path: kind
+          value: ValidatingAdmissionPolicyBinding
+          matchMany: true
+        equal:
+          path: spec.matchResources.namespaceSelector
+          value:
+            matchLabels:
+              kubernetes.io/metadata.name: slurm

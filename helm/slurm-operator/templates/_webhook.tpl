@@ -22,6 +22,102 @@ survives a long release name and still distinguishes the webhook's objects.
 {{- end }}
 
 {{/*
+Whether to deploy the webhook server and its supporting objects. Renders
+"true" or an empty string, so it can be used directly in an `if`.
+*/}}
+{{- define "slurm-operator.webhook.serverEnabled" -}}
+{{- if and .Values.webhook.enabled (not .Values.webhook.admissionPolicies) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether to deploy the admission policies that replace the webhook server.
+*/}}
+{{- define "slurm-operator.webhook.policiesEnabled" -}}
+{{- if and .Values.webhook.enabled .Values.webhook.admissionPolicies -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Fail when the admission policies are enabled on a cluster that cannot serve
+them. MutatingAdmissionPolicy is served as admissionregistration.k8s.io/v1
+from Kubernetes 1.36.
+*/}}
+{{- define "slurm-operator.webhook.validatePolicies" -}}
+{{- $version := .Capabilities.KubeVersion.Version -}}
+{{- if and (include "slurm-operator.webhook.policiesEnabled" .) (not (semverCompare ">=1.36.0-0" $version)) -}}
+{{- fail (printf "webhook.admissionPolicies=true requires Kubernetes 1.36 or later, got %s" $version) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Name of a cluster-scoped admission policy object, scoped to the release.
+*/}}
+{{- define "slurm-operator.webhook.policyName" -}}
+{{- printf "%s-%s" (include "slurm-operator.fullname" .root) .name -}}
+{{- end }}
+
+{{/*
+Shared ValidatingAdmissionPolicy spec fields.
+Args (dict):
+  root      - root context
+  resources - list of CRD resources (plural) the policy matches
+*/}}
+{{- define "slurm-operator.webhook.validatingPolicySpec" -}}
+failurePolicy: {{ .root.Values.webhook.validating.failurePolicy }}
+{{- with .root.Values.webhook.validating.matchConditions }}
+matchConditions:
+  {{- toYaml . | nindent 2 }}
+{{- end }}{{- /* with .root.Values.webhook.validating.matchConditions */}}
+matchConstraints:
+  matchPolicy: {{ .root.Values.webhook.validating.matchPolicy }}
+  resourceRules:
+    - apiGroups:
+        - {{ include "slurm-operator.apiGroup" .root }}
+      apiVersions:
+        - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        {{- toYaml .resources | nindent 8 }}
+      scope: Namespaced
+{{- end }}
+
+{{/*
+ValidatingAdmissionPolicyBinding for a policy.
+Args (dict):
+  root   - root context
+  name   - policy name suffix
+  action - validation action (Deny or Warn)
+  params - when true, evaluate the policy against every object of its
+           paramKind in the namespace of the admitted object
+*/}}
+{{- define "slurm-operator.webhook.validatingPolicyBinding" -}}
+{{- $name := include "slurm-operator.webhook.policyName" (dict "root" .root "name" .name) -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" .root | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions:
+    - {{ .action }}
+  {{- if .params }}
+  paramRef:
+    selector: {}
+    parameterNotFoundAction: Allow
+  {{- end }}{{- /* if .params */}}
+  matchResources:
+    namespaceSelector:
+      {{- include "slurm-operator.webhook.namespaceSelector" (dict "root" .root "override" .root.Values.webhook.validating.namespaceSelector) | nindent 6 }}
+{{- end }}
+
+{{/*
 Common webhook labels
 */}}
 {{- define "slurm-operator.webhook.labels" -}}

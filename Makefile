@@ -554,11 +554,11 @@ sphinx-venv: $(LOCALBIN)
 CODECOV_PERCENT ?= 70
 
 .PHONY: test
-test: envtest ## Run tests.
+test: envtest helm-bin ## Run tests.
 	rm -f cover.out cover.html
 	$(eval ENVTEST_ASSETS := $(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path))
 	chmod -R -f u+w "$(ENVTEST_ASSETS)"
-	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" \
+	KUBEBUILDER_ASSETS="$(ENVTEST_ASSETS)" HELM="$(HELM)" \
 	go test `go list ./... | grep -v "/api" | grep -v "/e2e" | grep -v '/test'` -v -coverprofile cover.out
 	go tool cover -func cover.out
 	go tool cover -html cover.out -o cover.html

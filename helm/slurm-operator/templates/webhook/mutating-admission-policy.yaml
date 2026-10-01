@@ -1,0 +1,76 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+SPDX-License-Identifier: Apache-2.0
+*/}}
+
+{{- include "slurm-operator.webhook.validatePolicies" . }}
+{{- if and (include "slurm-operator.webhook.policiesEnabled" .) .Values.webhook.podsBinding }}
+{{- $name := include "slurm-operator.webhook.policyName" (dict "root" . "name" "pods-binding") -}}
+{{- $annotation := printf "topology.%s/spec" (include "slurm-operator.apiGroup" .) -}}
+# Pod topology: when the scheduler binds a Pod to a Node (pods/binding CREATE),
+# copies the Node's {{ $annotation }} annotation, its Slurm
+# dynamic topology line (for example "topo-switch:s2,topo-block:b2"), onto the
+# Binding, and the kube-apiserver copies Binding annotations onto the Pod.
+# Evaluated once per Node (the policy params); only the Node the Pod is bound
+# to contributes a patch, and Nodes without the annotation change nothing.
+# Pods in the slurm-operator namespace are excluded by the binding.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  failurePolicy: {{ .Values.webhook.mutating.failurePolicy }}
+  {{- with .Values.webhook.mutating.matchConditions }}
+  matchConditions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}{{- /* with .Values.webhook.mutating.matchConditions */}}
+  matchConstraints:
+    matchPolicy: {{ .Values.webhook.mutating.matchPolicy }}
+    resourceRules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+        resources:
+          - pods/binding
+  paramKind:
+    apiVersion: v1
+    kind: Node
+  reinvocationPolicy: Never
+  variables:
+    - name: topologySpec
+      expression: >-
+        params.metadata.name == object.target.name
+        ? params.metadata.?annotations[?'{{ $annotation }}']
+        : optional.none()
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          variables.topologySpec.hasValue()
+          ? Object{
+              metadata: Object.metadata{
+                annotations: {'{{ $annotation }}': variables.topologySpec.value()}
+              }
+            }
+          : Object{}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "slurm-operator.webhook.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  paramRef:
+    selector: {}
+    parameterNotFoundAction: Allow
+  matchResources:
+    namespaceSelector:
+      {{- include "slurm-operator.webhook.namespaceSelector" (dict "root" $ "extraExcludes" (list (include "slurm-operator.namespace" $))) | nindent 6 }}
+{{- end }}{{- /* if and (include "slurm-operator.webhook.policiesEnabled" .) .Values.webhook.podsBinding */}}

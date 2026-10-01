@@ -71,6 +71,11 @@ kubectl config use-context my-remote-cluster
 directly is equivalent. This workflow requires Make, Skaffold, Helm, kubectl,
 Go, yq, Docker or Podman, and push access to the registry.
 
+Add `--admission-policies` to install the operator with
+`webhook.admissionPolicies=true`, so the kube-apiserver enforces admission
+instead of the webhook server and cert-manager is not installed. It requires
+Kubernetes 1.36 or later, which the default Kind node image provides.
+
 To install only the external prerequisite, cert-manager, run:
 
 ```sh

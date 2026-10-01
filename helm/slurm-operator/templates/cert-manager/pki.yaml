@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 */}}
 
 {{- include "slurm-operator.webhook.validateModes" . -}}
-{{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+{{- if and (include "slurm-operator.webhook.serverEnabled" .) .Values.certManager.enabled }}
 {{- $certManager := .Values.certManager | default dict -}}
 ---
 # Create a selfsigned Issuer, in order to create a root CA certificate for
@@ -66,4 +66,4 @@ spec:
   dnsNames:
     - {{ include "slurm-operator.webhook.name" . }}
     - {{ include "slurm-operator.webhook.name" . }}.{{ include "slurm-operator.namespace" . }}.svc
-{{- end }}{{- /* if and .Values.webhook.enabled .Values.certManager.enabled */}}
+{{- end }}{{- /* if and (include "slurm-operator.webhook.serverEnabled" .) .Values.certManager.enabled */}}

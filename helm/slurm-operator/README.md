@@ -75,6 +75,7 @@ Kubernetes: `>= 1.29.0-0`
 | operator.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod assignment. Prefer scheduling replicas across failure domains (nodes, zones, ...) when running in HA. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/ |
 | priorityClassName | string | `""` | Set the priority class to use. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#priorityclass |
 | propagatedNodeConditions | list | `[]` | List of Kubernetes Node Conditions, by type, to propagate to the Slurm node drain reason. Ref: https://kubernetes.io/docs/reference/node/node-status/#condition |
+| webhook.admissionPolicies | bool | `false` | Enforce admission with ValidatingAdmissionPolicies and a MutatingAdmissionPolicy, evaluated by the kube-apiserver, instead of the webhook server. When true, the webhook Deployment, Service, RBAC, TLS Secret, and cert-manager objects are not deployed; `podsBinding`, `namespaces`, `validating`, and `mutating` still apply. Requires Kubernetes 1.36+. Ref: https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/ |
 | webhook.affinity | object | `{}` | Affinity for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity |
 | webhook.enabled | bool | `true` | Enable the webhook. |
 | webhook.healthPort | int | `8081` | Set the port used for health checks. |
