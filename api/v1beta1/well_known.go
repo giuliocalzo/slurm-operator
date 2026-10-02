@@ -30,6 +30,18 @@ const (
 	// workload by. Pods with an earlier deadline are preferred to be deleted before pods with a later deadline.
 	// NOTE: this is honored on a best-effort basis, and does not offer guarantees on pod deletion order.
 	AnnotationPodDeadline = NodeSetPrefix + "pod-deadline"
+
+	// AnnotationPodConfigHash stores a checksum of the ConfigMaps and Secrets consumed by a NodeSet pod.
+	// NOTE: Set by the NodeSet controller when the NodeSet has AnnotationRolloutOnConfigChange.
+	AnnotationPodConfigHash = NodeSetPrefix + "config-hash"
+)
+
+// Well Known Annotations for Objects of type NodeSet
+const (
+	// AnnotationRolloutOnConfigChange, when "true", makes the NodeSet replace its pods, following its
+	// UpdateStrategy, whenever the content of a ConfigMap or Secret consumed by them changes. Tracked
+	// references are configMap, secret, and projected volumes, plus container envFrom and env[].valueFrom.
+	AnnotationRolloutOnConfigChange = NodeSetPrefix + "rollout-on-config-change"
 )
 
 // Well Known Annotations for Objects of type corev1.Node

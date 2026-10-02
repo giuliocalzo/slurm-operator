@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"k8s.io/utils/set"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -273,6 +274,78 @@ var _ = Describe("Slurm NodeSet", func() {
 
 			By("Simulating Slurm nodes being unregistered")
 			clientMap.Add(controllerKey, newFakeClientList(interceptor.Funcs{}))
+		}, SpecTimeout(testutils.Timeout))
+	})
+
+	Context("Rolling out on config change", func() {
+		var name = testutils.GenerateResourceName(5)
+		var nodeset *slinkyv1beta1.NodeSet
+		var controller *slinkyv1beta1.Controller
+		var slurmKeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
+		var configMap *corev1.ConfigMap
+
+		BeforeEach(func() {
+			slurmKeyRef := testutils.NewSlurmKeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
+			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
+			configMap = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Namespace: corev1.NamespaceDefault, Name: name + "-config"},
+				Data:       map[string]string{"app.conf": "v1"},
+			}
+			nodeset = testutils.NewNodeset(name, controller, 1)
+			nodeset.Annotations = map[string]string{slinkyv1beta1.AnnotationRolloutOnConfigChange: "true"}
+			nodeset.Spec.LogFile.Image = "alpine"
+			nodeset.Spec.Template.PodSpecWrapper.Volumes = []corev1.Volume{
+				{Name: "app-config", VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMap.Name}},
+				}},
+			}
+			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, configMap.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, nodeset.DeepCopy())).To(Succeed())
+		})
+
+		AfterEach(func() {
+			_ = k8sClient.Delete(ctx, nodeset)
+			_ = k8sClient.Delete(ctx, configMap)
+			_ = k8sClient.Delete(ctx, controller)
+			_ = k8sClient.Delete(ctx, slurmKeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
+		})
+
+		It("Should replace pods when a referenced ConfigMap changes", func(ctx SpecContext) {
+			podKey := k8sclient.ObjectKey{Namespace: nodeset.Namespace, Name: nodesetutils.GetOrdinalPodName(nodeset, 0)}
+			configMapKey := k8sclient.ObjectKeyFromObject(configMap)
+			pod := &corev1.Pod{}
+
+			By("Waiting for the pod to carry a config hash")
+			var initialHash string
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, podKey, pod)).To(Succeed())
+				initialHash = pod.Annotations[slinkyv1beta1.AnnotationPodConfigHash]
+				g.Expect(initialHash).ShouldNot(BeEmpty())
+			}, testutils.Timeout, testutils.Interval).Should(Succeed())
+			initialUID := pod.UID
+
+			By("Changing the ConfigMap content")
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, configMapKey, configMap)).To(Succeed())
+				configMap.Data["app.conf"] = "v2"
+				g.Expect(k8sClient.Update(ctx, configMap)).To(Succeed())
+			}, testutils.Timeout, testutils.Interval).Should(Succeed())
+
+			By("Waiting for the pod to be replaced with a new config hash")
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, podKey, pod)).To(Succeed())
+				g.Expect(pod.UID).ShouldNot(Equal(initialUID))
+				g.Expect(pod.Annotations[slinkyv1beta1.AnnotationPodConfigHash]).ShouldNot(BeEmpty())
+				g.Expect(pod.Annotations[slinkyv1beta1.AnnotationPodConfigHash]).ShouldNot(Equal(initialHash))
+			}, testutils.Timeout, testutils.Interval).Should(Succeed())
 		}, SpecTimeout(testutils.Timeout))
 	})
 })

@@ -21,6 +21,7 @@ primitives. For design-level details, see
     - [Pod Deadline](#pod-deadline)
   - [Workload Disruption Protection](#workload-disruption-protection)
   - [Customizing the slurmd preStop Hook](#customizing-the-slurmd-prestop-hook)
+  - [Rolling Out on Config Change](#rolling-out-on-config-change)
   - [External Drain Preservation](#external-drain-preservation)
   - [External Health Checker Integration Pattern](#external-health-checker-integration-pattern)
   - [Node Identity](#node-identity)
@@ -311,6 +312,53 @@ Points to keep in mind:
   scale-in the controller drains each Slurm node and waits for it to finish
   before deleting the pod, and `spec.pruneSlurmNodeRecords` governs when the
   operator deletes Slurm node records.
+
+## Rolling Out on Config Change
+
+By default, editing a ConfigMap or Secret that NodeSet pods consume does not
+replace the pods: mounted files refresh eventually, but environment variables
+and files read once at startup keep their old values. Annotate the NodeSet to
+have the operator replace its pods whenever that content changes:
+
+```sh
+kubectl annotate nodeset <nodeset> nodeset.slinky.slurm.net/rollout-on-config-change=true
+```
+
+With Helm, set the annotation through the NodeSet metadata:
+
+```yaml
+nodesets:
+  slinky:
+    metadata:
+      annotations:
+        nodeset.slinky.slurm.net/rollout-on-config-change: "true"
+```
+
+The operator tracks every ConfigMap and Secret the pods reference through:
+
+- `configMap`, `secret`, and `projected` volumes in `podSpec`
+- `envFrom` and `env[].valueFrom` of the `podSpec` containers and init
+  containers, `slurmd`, and `logfile`
+- the SSSD config Secret, when SSH is enabled
+
+It stamps a checksum of their content on the pod template as
+`nodeset.slinky.slurm.net/config-hash`. When a tracked object changes, or one
+that was missing is created, the checksum changes and the NodeSet gets a new
+revision, which its `updateStrategy` rolls out like any other template change.
+With `OnDelete`, pods only pick up the new revision once you delete them.
+
+```sh
+kubectl get pods -l app.kubernetes.io/name=slurmd \
+  -o custom-columns='NAME:.metadata.name,HASH:.metadata.annotations.nodeset\.slinky\.slurm\.net/config-hash'
+```
+
+Points to keep in mind:
+
+- Enabling or disabling the annotation changes the pod template, so it rolls the
+  pods once.
+- Any change to a tracked object counts, including keys the pods do not use.
+- Operator-managed objects, such as the `slurm.key` Secret and the generated SSH
+  config, are not tracked.
 
 ## External Drain Preservation
 

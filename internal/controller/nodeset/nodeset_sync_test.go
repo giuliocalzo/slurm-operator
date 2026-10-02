@@ -686,6 +686,90 @@ func TestNodeSetReconciler_Sync_DeletionStillSyncsStatus(t *testing.T) {
 		"status must still be synced while a NodeSet is terminating")
 }
 
+func TestNodeSetReconciler_applyConfigHash(t *testing.T) {
+	newConfigMap := func(data map[string]string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: corev1.NamespaceDefault, Name: "my-config"},
+			Data:       data,
+		}
+	}
+	newOptedNodeSet := func(rollout bool) *slinkyv1beta1.NodeSet {
+		nodeset := newNodeSet("foo", "slurm", 0)
+		if rollout {
+			nodeset.Annotations = map[string]string{slinkyv1beta1.AnnotationRolloutOnConfigChange: "true"}
+		}
+		nodeset.Spec.Template.PodSpecWrapper.Volumes = []corev1.Volume{
+			{Name: "config", VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-config"}},
+			}},
+		}
+		return nodeset
+	}
+	apply := func(t *testing.T, nodeset *slinkyv1beta1.NodeSet, cm *corev1.ConfigMap) *slinkyv1beta1.NodeSet {
+		t.Helper()
+		c := fake.NewClientBuilder().WithObjects(cm).Build()
+		r := newNodeSetController(c, clientmap.NewClientMap())
+		nodeset = nodeset.DeepCopy()
+		require.NoError(t, r.applyConfigHash(context.TODO(), nodeset))
+		return nodeset
+	}
+
+	t.Run("not opted in", func(t *testing.T) {
+		nodeset := newOptedNodeSet(false)
+		got := apply(t, nodeset, newConfigMap(map[string]string{"a": "1"}))
+		require.Equal(t, nodeset.Spec, got.Spec)
+	})
+
+	t.Run("opted in", func(t *testing.T) {
+		nodeset := newOptedNodeSet(true)
+		before := apply(t, nodeset, newConfigMap(map[string]string{"a": "1"}))
+		same := apply(t, nodeset, newConfigMap(map[string]string{"a": "1"}))
+		after := apply(t, nodeset, newConfigMap(map[string]string{"a": "2"}))
+
+		hash := before.Spec.Template.Metadata.Annotations[slinkyv1beta1.AnnotationPodConfigHash]
+		require.NotEmpty(t, hash)
+		require.Equal(t, hash, same.Spec.Template.Metadata.Annotations[slinkyv1beta1.AnnotationPodConfigHash])
+		require.NotEqual(t, hash, after.Spec.Template.Metadata.Annotations[slinkyv1beta1.AnnotationPodConfigHash])
+
+		revBefore, err := newRevision(before, 1, ptr.To[int32](0))
+		require.NoError(t, err)
+		revAfter, err := newRevision(after, 1, ptr.To[int32](0))
+		require.NoError(t, err)
+		require.NotEqual(t, historycontrol.GetRevision(revBefore.Labels), historycontrol.GetRevision(revAfter.Labels),
+			"a config content change must produce a new revision")
+
+		controller := testutils.NewController("slurm", testutils.NewSlurmKeyRef("slurm"), testutils.NewJwtKeyRef("slurm"), nil)
+		pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), before, controller, 0, "")
+		require.Equal(t, hash, pod.Annotations[slinkyv1beta1.AnnotationPodConfigHash])
+	})
+
+	t.Run("Sync rolls the revision without persisting the hash", func(t *testing.T) {
+		nodeset := newOptedNodeSet(true)
+		cm := newConfigMap(map[string]string{"a": "1"})
+		c := fake.NewClientBuilder().WithObjects(nodeset, cm).WithStatusSubresource(nodeset).Build()
+		r := newNodeSetController(c, clientmap.NewClientMap())
+		req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(nodeset)}
+
+		syncedHash := func() string {
+			t.Helper()
+			require.NoError(t, r.Sync(context.TODO(), req))
+			got := &slinkyv1beta1.NodeSet{}
+			require.NoError(t, c.Get(context.TODO(), req.NamespacedName, got))
+			require.NotContains(t, got.Spec.Template.Metadata.Annotations, slinkyv1beta1.AnnotationPodConfigHash,
+				"the config hash must not be written back to the NodeSet")
+			require.NotEmpty(t, got.Status.NodeSetHash)
+			return got.Status.NodeSetHash
+		}
+
+		first := syncedHash()
+		require.Equal(t, first, syncedHash(), "an unchanged config must keep the revision")
+
+		cm.Data = map[string]string{"a": "2"}
+		require.NoError(t, c.Update(context.TODO(), cm))
+		require.NotEqual(t, first, syncedHash(), "a changed config must produce a new revision")
+	})
+}
+
 func TestNodeSetReconciler_sync(t *testing.T) {
 	controller := &slinkyv1beta1.Controller{
 		ObjectMeta: metav1.ObjectMeta{
