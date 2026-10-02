@@ -39,6 +39,7 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/syncsteps"
 	"github.com/SlinkyProject/slurm-operator/internal/utils"
+	"github.com/SlinkyProject/slurm-operator/internal/utils/configrefs"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/mathutils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
@@ -81,6 +82,10 @@ func (r *NodeSetReconciler) Sync(ctx context.Context, req reconcile.Request) err
 
 	if nodeset.DeletionTimestamp.IsZero() {
 		durationStore.Push(key, 30*time.Second)
+	}
+
+	if err := r.applyConfigHash(ctx, nodeset); err != nil {
+		return err
 	}
 
 	if err := r.adoptOrphanRevisions(ctx, nodeset); err != nil {
@@ -234,6 +239,25 @@ func (r *NodeSetReconciler) updateNodeSetFinalizers(ctx context.Context, nodeset
 		}
 	}
 
+	return nil
+}
+
+// applyConfigHash stamps the in-memory pod template of an opted-in NodeSet with a
+// checksum of the ConfigMaps and Secrets its pods consume. The checksum is part
+// of the revision, so a content change rolls the pods per the UpdateStrategy.
+// The NodeSet must not be written back with this mutation.
+func (r *NodeSetReconciler) applyConfigHash(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) error {
+	if !nodesetutils.RolloutOnConfigChange(nodeset) {
+		return nil
+	}
+	hash, err := configrefs.Hash(ctx, r.Client, nodeset.Namespace, nodesetutils.ConfigRefs(nodeset))
+	if err != nil {
+		return fmt.Errorf("failed to hash config references: %w", err)
+	}
+	if nodeset.Spec.Template.Metadata.Annotations == nil {
+		nodeset.Spec.Template.Metadata.Annotations = make(map[string]string)
+	}
+	nodeset.Spec.Template.Metadata.Annotations[slinkyv1beta1.AnnotationPodConfigHash] = hash
 	return nil
 }
 

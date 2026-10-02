@@ -11,6 +11,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	nodesetutils "github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/utils"
 )
 
 type clientIndexer struct {
@@ -19,12 +22,34 @@ type clientIndexer struct {
 	fn    client.IndexerFunc
 }
 
+// NodeSetConfigRefsField indexes NodeSets that opted in to rolling on config
+// change by the configrefs.Ref.String() of each ConfigMap and Secret they consume.
+const NodeSetConfigRefsField = "nodeset.configRefs"
+
 var indexers = []clientIndexer{
 	{
 		obj:   &corev1.Pod{},
 		field: "spec.nodeName",
 		fn:    getPodNodeName,
 	},
+	{
+		obj:   &slinkyv1beta1.NodeSet{},
+		field: NodeSetConfigRefsField,
+		fn:    getNodeSetConfigRefs,
+	},
+}
+
+func getNodeSetConfigRefs(o client.Object) []string {
+	nodeset, ok := o.(*slinkyv1beta1.NodeSet)
+	if !ok || !nodesetutils.RolloutOnConfigChange(nodeset) {
+		return []string{}
+	}
+	refs := nodesetutils.ConfigRefs(nodeset)
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.String())
+	}
+	return out
 }
 
 func getPodNodeName(o client.Object) []string {

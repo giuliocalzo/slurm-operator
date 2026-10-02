@@ -107,6 +107,8 @@ type NodeSetReconciler struct {
 // +kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=slinky.slurm.net,resources=controllers,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
@@ -158,6 +160,7 @@ func (r *NodeSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.eventRecorder = mgr.GetEventRecorder(ControllerName)
 	r.podControl = podcontrol.NewPodControl(r.Client, r.eventRecorder)
 	podEventHandler := eventhandler.NewPodEventHandler(r.Client, r.expectations)
+	configRefEventHandler := eventhandler.NewConfigRefEventHandler(r.Client)
 	if err := indexes.SetupWithManager(mgr); err != nil {
 		return err
 	}
@@ -170,6 +173,8 @@ func (r *NodeSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Node{}, eventhandler.NewNodeEventHandler(r.Client)).
 		Watches(&slinkyv1beta1.Controller{}, eventhandler.NewControllerEventHandler(r.Client)).
 		Watches(&corev1.Secret{}, eventhandler.NewSecretEventHandler(r.Client)).
+		Watches(&corev1.Secret{}, configRefEventHandler).
+		Watches(&corev1.ConfigMap{}, configRefEventHandler).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 			RateLimiter:             ratelimiter.Build[reconcile.Request](),
