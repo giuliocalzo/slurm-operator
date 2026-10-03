@@ -110,6 +110,11 @@ operator:
   tokenWorkers: 4
   # -- Set the max concurrent workers for the SlurmClient controller.
   slurmclientWorkers: 2
+  # -- Set the initial concurrency for batched NodeSet sync operations. Each
+  # successful batch doubles until the work is exhausted, so raising this
+  # reduces the number of sequential barriers on large NodeSets at the cost of
+  # weaker error batching. Values below 1 are treated as 1.
+  slowStartInitialBatchSize: 1
   # -- Set the log level by string (e.g. error, info, debug) or number (e.g. 1..5).
   logLevel: info
   # -- Set the port used for health checks.

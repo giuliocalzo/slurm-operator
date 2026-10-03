@@ -59,6 +59,10 @@ spec:
             - --slurmclient-workers
             - {{ . | quote }}
             {{- end }}{{- /* with .Values.operator.slurmclientWorkers */}}
+            {{- with .Values.operator.slowStartInitialBatchSize }}
+            - --slow-start-initial-batch-size
+            - {{ . | quote }}
+            {{- end }}{{- /* with .Values.operator.slowStartInitialBatchSize */}}
             {{- with .Values.operator.logLevel }}
             - --zap-log-level
             - {{ . | quote }}

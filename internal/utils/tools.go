@@ -5,6 +5,8 @@
 package utils
 
 import (
+	"fmt"
+	"runtime/debug"
 	"sync"
 
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
@@ -23,7 +25,8 @@ const (
 //
 // If a whole batch succeeds, the next batch may get exponentially larger.
 // If there are any failures in a batch, all remaining batches are skipped
-// after waiting for the current batch to complete.
+// after waiting for the current batch to complete. A panic escaping the
+// function is recovered and treated as such a failure.
 //
 // It returns the number of successful calls to the function.
 func SlowStartBatch(count, initialBatchSize int, fn func(index int) error) (int, error) {
@@ -37,6 +40,15 @@ func SlowStartBatch(count, initialBatchSize int, fn func(index int) error) (int,
 		for range batchSize {
 			go func(idx int) {
 				defer wg.Done()
+				// controller-runtime's RecoverPanic only wraps Reconcile on its
+				// own goroutine, so a panic escaping fn here would terminate the
+				// manager process rather than fail a single call. Report it as a
+				// batch error so the remaining batches are skipped instead.
+				defer func() {
+					if r := recover(); r != nil {
+						errCh <- fmt.Errorf("panic: %v [recovered]\n%s", r, debug.Stack())
+					}
+				}()
 				if err := fn(idx); err != nil {
 					errCh <- err
 				}
