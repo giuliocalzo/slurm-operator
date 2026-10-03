@@ -6,6 +6,7 @@ package slurmcontrol
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -2275,8 +2276,8 @@ func Test_realSlurmControl_GetNodeDeadlines(t *testing.T) {
 							V0044JobInfo: api.V0044JobInfo{
 								JobId:     ptr.To[int32](1),
 								JobState:  ptr.To([]api.V0044JobInfoJobState{api.V0044JobInfoJobStateRUNNING}),
-								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix())}),
-								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(30 * int32(time.Minute.Seconds()))}),
+								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix()), Set: ptr.To(true)}),
+								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(30 * int32(time.Minute.Seconds())), Set: ptr.To(true)}),
 								Nodes: func() *string {
 									hostlist, err := hostlist.Compress([]string{*nodeList.Items[0].Name})
 									if err != nil {
@@ -2290,8 +2291,8 @@ func Test_realSlurmControl_GetNodeDeadlines(t *testing.T) {
 							V0044JobInfo: api.V0044JobInfo{
 								JobId:     ptr.To[int32](2),
 								JobState:  ptr.To([]api.V0044JobInfoJobState{api.V0044JobInfoJobStateRUNNING}),
-								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix())}),
-								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(45 * int32(time.Minute.Seconds()))}),
+								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix()), Set: ptr.To(true)}),
+								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(45 * int32(time.Minute.Seconds())), Set: ptr.To(true)}),
 								Nodes: func() *string {
 									hostlist, err := hostlist.Compress([]string{*nodeList.Items[0].Name, *nodeList.Items[1].Name})
 									if err != nil {
@@ -2305,8 +2306,8 @@ func Test_realSlurmControl_GetNodeDeadlines(t *testing.T) {
 							V0044JobInfo: api.V0044JobInfo{
 								JobId:     ptr.To[int32](3),
 								JobState:  ptr.To([]api.V0044JobInfoJobState{api.V0044JobInfoJobStateRUNNING}),
-								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix())}),
-								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(int32(time.Hour.Seconds()))}),
+								StartTime: ptr.To(api.V0044Uint64NoValStruct{Number: ptr.To(now.Unix()), Set: ptr.To(true)}),
+								TimeLimit: ptr.To(api.V0044Uint32NoValStruct{Number: ptr.To(int32(time.Hour.Seconds())), Set: ptr.To(true)}),
 								Nodes: func() *string {
 									hostlist, err := hostlist.Compress([]string{*nodeList.Items[0].Name})
 									if err != nil {
@@ -2372,6 +2373,79 @@ func Test_realSlurmControl_GetNodeDeadlines(t *testing.T) {
 				ts := got.Peek(ptr.Deref(node.Name, ""))
 				require.True(t, ts.After(now), "timestamp = %v, after = %v", ts, ts.After(now))
 			}
+		})
+	}
+}
+
+func Test_jobDeadline(t *testing.T) {
+	start := time.Unix(1700000000, 0)
+	setStart := api.V0044Uint64NoValStruct{Number: ptr.To(start.Unix()), Set: ptr.To(true)}
+
+	tests := []struct {
+		name      string
+		startTime api.V0044Uint64NoValStruct
+		timeLimit api.V0044Uint32NoValStruct
+		want      time.Time
+		wantOk    bool
+	}{
+		{
+			name:      "thirty minute limit",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To[int32](30), Set: ptr.To(true)},
+			want:      start.Add(30 * time.Minute),
+			wantOk:    true,
+		},
+		{
+			name:      "infinite limit",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Infinite: ptr.To(true)},
+			want:      start.Add(infiniteDuration),
+			wantOk:    true,
+		},
+		{
+			name:      "unset start time",
+			startTime: api.V0044Uint64NoValStruct{Number: ptr.To(start.Unix())},
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To[int32](30), Set: ptr.To(true)},
+			wantOk:    false,
+		},
+		{
+			name:      "unset time limit",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To[int32](0)},
+			wantOk:    false,
+		},
+		{
+			name:      "limit at the time.Duration boundary is treated as infinite",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To(int32(maxTimeLimitMinutes)), Set: ptr.To(true)},
+			want:      start.Add(infiniteDuration),
+			wantOk:    true,
+		},
+		{
+			// Regression: time.Duration(minutes) * time.Minute wrapped negative
+			// here, yielding a deadline in the past.
+			name:      "limit beyond the time.Duration boundary is treated as infinite",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To[int32](math.MaxInt32), Set: ptr.To(true)},
+			want:      start.Add(infiniteDuration),
+			wantOk:    true,
+		},
+		{
+			name:      "negative time limit has no deadline",
+			startTime: setStart,
+			timeLimit: api.V0044Uint32NoValStruct{Number: ptr.To[int32](-1), Set: ptr.To(true)},
+			wantOk:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := jobDeadline(tt.startTime, tt.timeLimit)
+			require.Equal(t, tt.wantOk, ok)
+			if !tt.wantOk {
+				return
+			}
+			require.Equal(t, tt.want, got)
+			require.True(t, got.After(start), "deadline %v must not precede start %v", got, start)
 		})
 	}
 }
